@@ -1,0 +1,49 @@
+name: Process
+
+# Phase 2: triage -> extract -> factcheck -> Discord. Offset 15 minutes from
+# Ingest so the two workflows don't contend for the same database connection
+# at the top of each half-hour.
+
+on:
+  schedule:
+    - cron: "15,45 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: process
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install
+        run: npm ci
+
+      - name: Apply migrations
+        run: npm run migrate
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+
+      - name: Triage + extract + factcheck + publish
+        run: npm run process
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+          DISCORD_WEBHOOK_NEWS: ${{ secrets.DISCORD_WEBHOOK_NEWS }}
+          MODEL_TRIAGE: ${{ vars.MODEL_TRIAGE }}
+          MODEL_EXTRACTION: ${{ vars.MODEL_EXTRACTION }}
+          MODEL_FACTCHECK: ${{ vars.MODEL_FACTCHECK }}
+          MAX_PROCESS_BATCH: ${{ vars.MAX_PROCESS_BATCH }}

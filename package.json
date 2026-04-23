@@ -1,7 +1,7 @@
 {
   "name": "cyber-news",
   "version": "0.1.0",
-  "description": "Personal cybersecurity news dissector — Phase 1 (ingest + dedup + pre-filter)",
+  "description": "Personal cybersecurity news dissector — Phase 2 (ingest + LLM triage/extract/factcheck + Discord)",
   "private": true,
   "type": "module",
   "engines": {
