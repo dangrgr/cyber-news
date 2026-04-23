@@ -24,3 +24,22 @@ export const SOURCES: readonly SourceFeed[] = [
   { id: "google_security",  name: "Google Security Blog",url: "https://security.googleblog.com/feeds/posts/default",     tier: "vendor"    },
   { id: "github_advisories",name: "GitHub Security Advisories", url: "https://github.com/advisories.atom",               tier: "advisory"  },
 ] as const;
+
+/** Best-effort lookup: match an article URL's hostname back to a configured source feed. */
+export function getSourceByCanonicalUrl(url: string): SourceFeed | null {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  for (const s of SOURCES) {
+    try {
+      const sHost = new URL(s.url).hostname.toLowerCase();
+      if (host === sHost || host.endsWith(`.${sHost}`) || sHost.endsWith(`.${host}`)) return s;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
