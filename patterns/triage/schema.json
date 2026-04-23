@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["decision", "novel", "significant", "duplicate_of", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "decision": { "enum": ["process", "skip"] },
+    "novel": { "type": "boolean" },
+    "significant": { "type": "boolean" },
+    "duplicate_of": { "type": ["string", "null"] },
+    "reason": { "type": "string" }
+  }
+}
