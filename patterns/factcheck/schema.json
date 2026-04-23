@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["overall", "issues"],
+  "properties": {
+    "overall": { "enum": ["pass", "fail"] },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "verdict", "article_evidence", "detail"],
+        "properties": {
+          "field": { "type": "string" },
+          "verdict": { "enum": ["UNSUPPORTED", "OVERREACH", "RELATIONSHIP_UNSUPPORTED"] },
+          "article_evidence": { "type": ["string", "null"] },
+          "detail": { "type": "string" }
+        }
+      }
+    }
+  }
+}
