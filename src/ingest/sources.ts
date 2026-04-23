@@ -20,5 +20,7 @@ export const SOURCES: readonly SourceFeed[] = [
   { id: "arstechnica_sec",  name: "Ars Technica – Security", url: "https://feeds.arstechnica.com/arstechnica/security", tier: "secondary" },
   { id: "csoonline",        name: "CSO Online",          url: "https://www.csoonline.com/index.rss",                     tier: "secondary" },
   { id: "thehackernews",    name: "The Hacker News",     url: "https://feeds.feedburner.com/TheHackersNews",             tier: "aggregator" },
+  { id: "schneier",         name: "Schneier on Security",url: "https://www.schneier.com/feed/",                          tier: "primary"   },
+  { id: "google_security",  name: "Google Security Blog",url: "https://security.googleblog.com/feeds/posts/default",     tier: "vendor"    },
   { id: "github_advisories",name: "GitHub Security Advisories", url: "https://github.com/advisories.atom",               tier: "advisory"  },
 ] as const;
