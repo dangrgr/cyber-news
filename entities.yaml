@@ -1,0 +1,95 @@
+# Hand-maintained canonical aliases + campaigns. See PRD §9 and CLAUDE.md invariants.
+# Never auto-generated. Update by hand only.
+version: 1
+last_updated: 2026-04-22
+
+actors:
+  - canonical: "Void Manticore"
+    aliases: ["Handala", "Handala Hack Team", "Banished Kitten", "Red Sandstorm", "Storm-842"]
+    attribution: "Iranian MOIS"
+    type: "state"
+    notes: "Persona for MOIS destructive ops. Successor to Homeland Justice, Karma."
+
+  - canonical: "SLH"
+    aliases: ["Scattered LAPSUS$ Hunters", "Trinity of Chaos"]
+    type: "alliance"
+    members: ["ShinyHunters", "Scattered Spider", "Lapsus$"]
+    notes: "Aug 2025 merger. ShinyHunters = exfil/extortion; Scattered Spider = initial access via vishing; Lapsus$ = identity compromise."
+
+  - canonical: "ShinyHunters"
+    aliases: []
+    notes: "Part of SLH alliance. Handles exfil and leak-site ops."
+
+  - canonical: "Scattered Spider"
+    aliases: ["UNC3944", "Octo Tempest"]
+    notes: "Part of SLH alliance. Social engineering / vishing specialists."
+
+  - canonical: "Lapsus$"
+    aliases: ["LAPSUS$"]
+    notes: "Part of SLH alliance. Identity-system compromise."
+
+  - canonical: "UNC1069"
+    aliases: []
+    attribution: "North Korea (GTIG)"
+    notes: "Axios npm hijack March 2026."
+
+  - canonical: "APT28"
+    aliases: ["Fancy Bear", "Forest Blizzard", "STRONTIUM"]
+    attribution: "Russia GRU"
+
+  - canonical: "Volt Typhoon"
+    aliases: []
+    attribution: "PRC"
+    notes: "Critical infrastructure pre-positioning."
+
+  - canonical: "Salt Typhoon"
+    aliases: []
+    attribution: "PRC MSS"
+    notes: "Telecom-focused; US carrier compromises 2024-2025."
+
+campaigns:
+  - canonical: "SLH-Salesforce-2025-2026"
+    actors: ["SLH"]
+    start_date: "2025-08"
+    status: "active"
+    notes: "Vishing-led Salesforce theft. ~400 orgs, ~1.5B records claimed. Key victims: Google, Cisco, Qantas, LVMH, Allianz, Adidas, Chanel."
+
+  - canonical: "Handala-Retaliation-2026"
+    actors: ["Void Manticore"]
+    start_date: "2026-03"
+    status: "active"
+    notes: "Stated retaliation for Feb 28 Minab school strike. Stryker, Lockheed doxx, Patel Gmail."
+
+watched_orgs:
+  critical:
+    - "Salesforce"
+    - "Snowflake"
+    - "Okta"
+    - "Microsoft"
+    - "Cisco"
+  relevant_to_me:
+    - "Locally Compact"
+    - "Anthropic"
+    - "UniFi"
+
+watched_cves_proactive: []
+
+trusted_sources:
+  tier_1:
+    - krebsonsecurity.com
+    - therecord.media
+    - news.risky.biz
+  tier_2:
+    - bleepingcomputer.com
+    - darkreading.com
+    - securityweek.com
+    - cyberscoop.com
+  tier_3:
+    - thehackernews.com
+    - hackread.com
+  vendor_authoritative:
+    - msrc.microsoft.com
+    - unit42.paloaltonetworks.com
+    - cloud.google.com/blog/topics/threat-intelligence
+    - blog.talosintelligence.com
+    - cisa.gov
