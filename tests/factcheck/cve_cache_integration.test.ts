@@ -95,6 +95,27 @@ describe("lookupCve: read-through cache", () => {
     assert.equal(nvd.calls.length, 2);
   });
 
+  it("does not cache rate-limited results (treats as transient, re-verifies later)", async () => {
+    // First call: rate-limited. Second call: real answer.
+    let i = 0;
+    const nvd: NvdClient & { calls: string[] } = {
+      calls: [],
+      async lookup(cveId: string) {
+        this.calls.push(cveId);
+        if (i++ === 0) {
+          return { exists: true, cvssV31: null, severity: null, summary: null, rawJson: null, rateLimited: true };
+        }
+        return { exists: true, cvssV31: 9.8, severity: "CRITICAL", summary: "real", rawJson: "{}" };
+      },
+    };
+    const r1 = await lookupCve("CVE-2026-1234", { client, nvd });
+    assert.equal(r1.exists, true, "trust LLM while NVD is degraded");
+
+    const r2 = await lookupCve("CVE-2026-1234", { client, nvd });
+    assert.equal(nvd.calls.length, 2, "should re-hit NVD on second call since rate-limit wasn't cached");
+    assert.equal(r2.severity, "CRITICAL");
+  });
+
   it("does not cache malformed ids", async () => {
     const nvd = mockNvd({});
     const r = await lookupCve("CVE-BAD", { client, nvd });

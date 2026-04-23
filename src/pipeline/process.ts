@@ -157,25 +157,31 @@ async function processOne(
   }
 
   // ---- Extract (chunk + merge) ----
-  const { chunks } = chunkArticle(article.raw_text);
-  const perChunk: ExtractionOutput[] = [];
-  for (let i = 0; i < chunks.length; i++) {
-    const r = await runPattern(
-      EXTRACT_PATTERN,
-      {
-        url: article.url,
-        source: article.source_id,
-        published_at: article.published_at,
-        chunk_index: String(i),
-        total_chunks: String(chunks.length),
-        raw_text: chunks[i]!,
-      },
-      anthropicDeps,
-    );
-    modelCalls += 1;
-    perChunk.push(r.output as ExtractionOutput);
-  }
-  const extraction = mergeExtractions(perChunk);
+  // Reconcile re-runs must go through the exact same path (chunk + merge) or
+  // the chunk-0-preferred summary from the original run won't match the
+  // single-pass summary from the re-run, producing spurious disagreements.
+  const runExtract = async (): Promise<ExtractionOutput> => {
+    const { chunks } = chunkArticle(article.raw_text);
+    const perChunk: ExtractionOutput[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const r = await runPattern(
+        EXTRACT_PATTERN,
+        {
+          url: article.url,
+          source: article.source_id,
+          published_at: article.published_at,
+          chunk_index: String(i),
+          total_chunks: String(chunks.length),
+          raw_text: chunks[i]!,
+        },
+        anthropicDeps,
+      );
+      modelCalls += 1;
+      perChunk.push(r.output as ExtractionOutput);
+    }
+    return mergeExtractions(perChunk);
+  };
+  const extraction = await runExtract();
 
   // ---- Factcheck: deterministic gate ----
   const det = await runDeterministic({
@@ -201,22 +207,7 @@ async function processOne(
   const decision = await reconcile({
     extraction1: extraction,
     factcheck1: fc.output as FactcheckOutput,
-    reRunExtract: async () => {
-      const r = await runPattern(
-        EXTRACT_PATTERN,
-        {
-          url: article.url,
-          source: article.source_id,
-          published_at: article.published_at,
-          chunk_index: "0",
-          total_chunks: "1",
-          raw_text: article.raw_text,
-        },
-        anthropicDeps,
-      );
-      modelCalls += 1;
-      return r.output as ExtractionOutput;
-    },
+    reRunExtract: runExtract,
   });
 
   if (decision.kind === "fail") {
