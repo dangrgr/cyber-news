@@ -45,6 +45,23 @@ export async function lookupCve(cveId: string, deps: CveCacheDeps): Promise<CveR
   if (cached && isFresh(cached, ttl, now())) return cached;
 
   const result = await deps.nvd.lookup(normalized);
+
+  // Rate-limited results are returned as "exists=true, unverified" to keep
+  // the factcheck gate from false-positive-failing articles during an NVD
+  // outage. Do NOT cache them — we want the next run to re-verify.
+  if (result.rateLimited) {
+    return {
+      cve_id: normalized,
+      exists: true,
+      cvss_v31: null,
+      severity: null,
+      summary: null,
+      kev_listed: false,
+      fetched_at: now().toISOString(),
+      raw_json: null,
+    };
+  }
+
   await upsertCached(deps.client, {
     cveId: normalized,
     exists: result.exists,

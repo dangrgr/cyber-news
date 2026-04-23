@@ -58,9 +58,9 @@ describe("NVD client: parsing", () => {
   });
 });
 
-describe("NVD client: 429 retry", () => {
+describe("NVD client: 429 handling", () => {
   it("honors Retry-After and succeeds on the retry", async () => {
-    let sleptMs = 0;
+    const slept: number[] = [];
     const client = createNvdClient({
       fetch: fakeFetch([
         () => new Response("", { status: 429, headers: { "retry-after": "1" } }),
@@ -71,15 +71,16 @@ describe("NVD client: 429 retry", () => {
           ),
       ]),
       sleep: async (ms: number) => {
-        sleptMs = ms;
+        slept.push(ms);
       },
+      minIntervalMs: 0,
     });
-    const r = await client.lookup("CVE-2026-1");
+    const r = await client.lookup("CVE-2026-1234");
     assert.equal(r.exists, true);
-    assert.equal(sleptMs, 1000);
+    assert.ok(slept.includes(1000), `expected 1000ms sleep after Retry-After: ${slept.join(",")}`);
   });
 
-  it("gives up after maxRetries and throws", async () => {
+  it("gracefully degrades after maxRetries: returns exists=true + rateLimited flag", async () => {
     const client = createNvdClient({
       fetch: fakeFetch([
         () => new Response("", { status: 429, headers: { "retry-after": "1" } }),
@@ -87,8 +88,53 @@ describe("NVD client: 429 retry", () => {
         () => new Response("", { status: 429, headers: { "retry-after": "1" } }),
       ]),
       sleep: async () => {},
+      minIntervalMs: 0,
       maxRetries: 2,
     });
-    await assert.rejects(client.lookup("CVE-2026-1"), /429/);
+    const r = await client.lookup("CVE-2026-1234");
+    assert.equal(r.exists, true, "graceful degrade: treat as exists so factcheck doesn't false-fail");
+    assert.equal(r.rateLimited, true);
+  });
+});
+
+describe("NVD client: client-side throttle", () => {
+  it("sleeps to maintain min-interval between consecutive calls", async () => {
+    const slept: number[] = [];
+    let t = 1_000_000;
+    const client = createNvdClient({
+      fetch: fakeFetch([
+        () => new Response(JSON.stringify({ vulnerabilities: [] }), { status: 200 }),
+        () => new Response(JSON.stringify({ vulnerabilities: [] }), { status: 200 }),
+      ]),
+      sleep: async (ms: number) => {
+        slept.push(ms);
+        t += ms; // simulate time passing during the sleep
+      },
+      now: () => t,
+      minIntervalMs: 6500,
+    });
+    await client.lookup("CVE-2026-1111");
+    // Second call immediately after should force a ~6500ms sleep.
+    await client.lookup("CVE-2026-2222");
+    assert.ok(slept.length > 0);
+    assert.ok(slept.some((ms) => ms >= 6000), `expected ~6500ms sleep, got [${slept.join(",")}]`);
+  });
+
+  it("does not sleep if enough time has already passed", async () => {
+    const slept: number[] = [];
+    let t = 1_000_000;
+    const client = createNvdClient({
+      fetch: fakeFetch([
+        () => new Response(JSON.stringify({ vulnerabilities: [] }), { status: 200 }),
+        () => new Response(JSON.stringify({ vulnerabilities: [] }), { status: 200 }),
+      ]),
+      sleep: async (ms: number) => { slept.push(ms); },
+      now: () => t,
+      minIntervalMs: 6500,
+    });
+    await client.lookup("CVE-2026-1111");
+    t += 10_000; // simulate 10s of real-world work between calls
+    await client.lookup("CVE-2026-2222");
+    assert.equal(slept.length, 0, "second call needed no throttle sleep");
   });
 });
