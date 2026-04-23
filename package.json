@@ -1,7 +1,7 @@
 {
   "name": "cyber-news",
   "version": "0.1.0",
-  "description": "Personal cybersecurity news dissector — Phase 1 (ingest + dedup + pre-filter)",
+  "description": "Personal cybersecurity news dissector — Phase 2 (ingest + LLM triage/extract/factcheck + Discord)",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,10 +11,12 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "ingest": "node --import tsx/esm src/ingest/run.ts",
+    "process": "node --import tsx/esm src/pipeline/run_process.ts",
     "migrate": "node --import tsx/esm scripts/migrate.ts",
-    "test": "node --import tsx/esm --test tests/**/*.test.ts"
+    "test": "node --import tsx/esm --test \"tests/**/*.test.ts\""
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.90.0",
     "@libsql/client": "^0.15.0",
     "@mozilla/readability": "^0.6.0",
     "jsdom": "^25.0.0",

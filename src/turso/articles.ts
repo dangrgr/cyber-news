@@ -114,6 +114,50 @@ export async function attachIncident(
   });
 }
 
+/**
+ * Articles currently at a given stage, ordered oldest-published first so the
+ * Phase 2 processor handles backlog in arrival order. Limited because a single
+ * run can't realistically process more than ~50 articles within the GH Actions
+ * 15-minute budget (see PRD §13 and the MAX_PROCESS_BATCH env default).
+ */
+export async function queryByStage(client: Client, stage: Stage, limit: number): Promise<ArticleRow[]> {
+  const res = await client.execute({
+    sql: `SELECT id, source_id, url, canonical_url, title, author, published_at,
+                 ingested_at, raw_text, stage_reached, failure_reason, incident_id
+            FROM articles
+           WHERE stage_reached = ?
+        ORDER BY published_at ASC
+           LIMIT ?`,
+    args: [stage, limit],
+  });
+  return res.rows.map((r) => ({
+    id: String(r.id),
+    source_id: String(r.source_id),
+    url: String(r.url),
+    canonical_url: String(r.canonical_url),
+    title: String(r.title),
+    author: r.author == null ? null : String(r.author),
+    published_at: String(r.published_at),
+    ingested_at: String(r.ingested_at),
+    raw_text: String(r.raw_text),
+    stage_reached: String(r.stage_reached) as Stage,
+    failure_reason: r.failure_reason == null ? null : String(r.failure_reason),
+    incident_id: r.incident_id == null ? null : String(r.incident_id),
+  }));
+}
+
+export async function setStage(
+  client: Client,
+  articleId: string,
+  stage: Stage,
+  failureReason: string | null = null,
+): Promise<void> {
+  await client.execute({
+    sql: `UPDATE articles SET stage_reached = ?, failure_reason = ? WHERE id = ?`,
+    args: [stage, failureReason, articleId],
+  });
+}
+
 export async function loadAliasesIntoTable(
   client: Client,
   rows: ReadonlyArray<{ alias: string; canonical: string; entity_type: string; confidence: number }>,
