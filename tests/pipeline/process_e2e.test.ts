@@ -305,6 +305,37 @@ describe("processPendingArticles: factcheck fail (deterministic date window)", (
   });
 });
 
+describe("processPendingArticles: MAX_PROCESS_BATCH parsing", () => {
+  it("treats empty-string MAX_PROCESS_BATCH as unset (defaults to 50, not 0)", async () => {
+    // Regression: GH Actions ${{ vars.FOO }} expands to "" when the variable
+    // is not set. Number("") is 0, which would silently return zero articles.
+    for (let i = 0; i < 3; i++) {
+      await seedArticle(db, { id: `art-batch-${i}` });
+    }
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({ decision: "skip", novel: false, significant: false, duplicate_of: null, reason: "x" }),
+      extract: () => "{}",
+      factcheck: () => "{}",
+    });
+    const discord = recordingDiscord();
+    const summary = await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord,
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+        MAX_PROCESS_BATCH: "", // <-- the bug: GH sets this to "" when var is unset
+      },
+    });
+    assert.equal(summary.processed, 3, "empty MAX_PROCESS_BATCH should fall back to default, not 0");
+  });
+});
+
 describe("processPendingArticles: mixed batch", () => {
   it("processes three articles into three different terminal states", async () => {
     await seedArticle(db, { id: "art-pub" });

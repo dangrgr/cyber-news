@@ -74,7 +74,11 @@ export interface ProcessSummary {
 
 export async function processPendingArticles(deps: ProcessDeps): Promise<ProcessSummary> {
   const env = deps.env ?? process.env;
-  const maxBatch = deps.maxBatch ?? Number(env.MAX_PROCESS_BATCH ?? 50);
+  // Note `|| 50` not `?? 50`: an empty-string env var (common when a GH Actions
+  // repo variable is not set) parses via Number() to 0, which would silently
+  // produce queryByStage(..., 0). `||` treats 0/empty-string as the "unset"
+  // case and falls back to the sane default.
+  const maxBatch = deps.maxBatch ?? (Number(env.MAX_PROCESS_BATCH) || 50);
 
   // Warm the entity_aliases table from the YAML once per run (cheap, idempotent).
   const entities = await loadEntities(deps.entitiesPath ?? "entities.yaml");
