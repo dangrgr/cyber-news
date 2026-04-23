@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "summary",
+    "victim_orgs_confirmed",
+    "orgs_mentioned",
+    "threat_actors_attributed",
+    "actors_mentioned",
+    "cves",
+    "initial_access_vector",
+    "ttps",
+    "impact",
+    "incident_date",
+    "confidence",
+    "claim_markers_observed",
+    "primary_source"
+  ],
+  "properties": {
+    "title": { "type": "string" },
+    "summary": { "type": "string" },
+    "victim_orgs_confirmed": { "type": "array", "items": { "type": "string" } },
+    "orgs_mentioned": { "type": "array", "items": { "type": "string" } },
+    "threat_actors_attributed": { "type": "array", "items": { "type": "string" } },
+    "actors_mentioned": { "type": "array", "items": { "type": "string" } },
+    "cves": { "type": "array", "items": { "type": "string" } },
+    "initial_access_vector": { "type": ["string", "null"] },
+    "ttps": { "type": "array", "items": { "type": "string" } },
+    "impact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "affected_count",
+        "affected_count_unit",
+        "data_exfil_size",
+        "sector",
+        "geographic_scope",
+        "service_disruption"
+      ],
+      "properties": {
+        "affected_count": { "type": ["number", "null"] },
+        "affected_count_unit": { "type": ["string", "null"] },
+        "data_exfil_size": { "type": ["string", "null"] },
+        "sector": { "type": ["string", "null"] },
+        "geographic_scope": { "type": ["string", "null"] },
+        "service_disruption": { "type": ["string", "null"] }
+      }
+    },
+    "incident_date": { "type": ["string", "null"] },
+    "confidence": { "enum": ["claim", "reported", "confirmed"] },
+    "claim_markers_observed": { "type": "array", "items": { "type": "string" } },
+    "primary_source": {
+      "enum": [
+        "article_itself",
+        "cited_vendor_advisory",
+        "cited_gov_advisory",
+        "cited_security_firm",
+        "aggregated"
+      ]
+    }
+  }
+}
