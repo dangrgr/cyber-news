@@ -1,0 +1,31 @@
+name: Recover
+
+# One-off utility: reset factcheck_failed articles stamped by the pre-fix NVD
+# 429 bug back to 'deduped' so the next process run retries them.
+# Scope is hardcoded in scripts/recover_nvd_orphans.ts; dispatch input is only
+# the dry-run toggle. No untrusted github.event.* inputs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Set to 1 to apply; anything else is dry-run.
+        required: false
+        default: ""
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: node --import tsx/esm scripts/recover_nvd_orphans.ts
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          APPLY: ${{ inputs.apply }}
