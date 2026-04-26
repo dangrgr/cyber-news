@@ -13,10 +13,14 @@ import { renderTemplate } from "./template.ts";
 import { validate, type JsonSchema, type JsonValue } from "./validator.ts";
 
 export interface PatternDefinition<TInput, TOutput> {
-  name: "triage" | "extract" | "factcheck";
+  name: "triage" | "extract" | "factcheck" | "vendor_doc_review";
   promptPath: string;
   schemaPath: string;
-  modelEnvVar: "MODEL_TRIAGE" | "MODEL_EXTRACTION" | "MODEL_FACTCHECK";
+  modelEnvVar:
+    | "MODEL_TRIAGE"
+    | "MODEL_EXTRACTION"
+    | "MODEL_FACTCHECK"
+    | "MODEL_VENDOR_DOC_REVIEW";
   buildPlaceholders: (input: TInput) => Record<string, string>;
 }
 

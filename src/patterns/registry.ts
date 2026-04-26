@@ -10,6 +10,8 @@ import type {
   FactcheckOutput,
   TriageInput,
   TriageOutput,
+  VendorDocReviewInput,
+  VendorDocReviewOutput,
 } from "./types.ts";
 
 const PATTERNS_ROOT = "patterns";
@@ -52,5 +54,20 @@ export const FACTCHECK_PATTERN: PatternDefinition<FactcheckInput, FactcheckOutpu
   buildPlaceholders: (i) => ({
     raw_text: i.raw_text,
     extraction_json: i.extraction_json,
+  }),
+};
+
+export const VENDOR_DOC_REVIEW_PATTERN: PatternDefinition<
+  VendorDocReviewInput,
+  VendorDocReviewOutput
+> = {
+  name: "vendor_doc_review",
+  promptPath: `${PATTERNS_ROOT}/vendor_doc_review/pattern.md`,
+  schemaPath: `${PATTERNS_ROOT}/vendor_doc_review/schema.json`,
+  modelEnvVar: "MODEL_VENDOR_DOC_REVIEW",
+  buildPlaceholders: (i) => ({
+    url: i.url,
+    vendor: i.vendor,
+    document_text: i.document_text,
   }),
 };

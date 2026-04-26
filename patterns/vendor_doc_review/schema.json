@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "vendor",
+    "product",
+    "advisory_id",
+    "advisory_url",
+    "cves",
+    "cvss_scores",
+    "affected_versions",
+    "fixed_versions",
+    "exploitation_status",
+    "kev_listed",
+    "disclosure_date",
+    "patch_released_date",
+    "mitigation_available",
+    "mitigation_summary",
+    "workaround_summary",
+    "attack_complexity",
+    "attack_vector",
+    "requires_user_interaction",
+    "requires_authentication",
+    "scope_changed",
+    "credit",
+    "notes"
+  ],
+  "properties": {
+    "vendor": { "type": "string" },
+    "product": { "type": "string" },
+    "advisory_id": { "type": ["string", "null"] },
+    "advisory_url": { "type": "string" },
+    "cves": { "type": "array", "items": { "type": "string" } },
+    "cvss_scores": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["cve", "version", "score", "severity", "vector"],
+        "properties": {
+          "cve": { "type": "string" },
+          "version": { "enum": ["2.0", "3.0", "3.1", "4.0"] },
+          "score": { "type": "number" },
+          "severity": { "enum": ["none", "low", "medium", "high", "critical"] },
+          "vector": { "type": "string" }
+        }
+      }
+    },
+    "affected_versions": { "type": "array", "items": { "type": "string" } },
+    "fixed_versions": { "type": "array", "items": { "type": "string" } },
+    "exploitation_status": {
+      "enum": [
+        "none_observed",
+        "proof_of_concept",
+        "in_the_wild",
+        "under_active_exploitation",
+        "unknown"
+      ]
+    },
+    "kev_listed": { "type": ["boolean", "null"] },
+    "disclosure_date": { "type": ["string", "null"] },
+    "patch_released_date": { "type": ["string", "null"] },
+    "mitigation_available": { "type": "boolean" },
+    "mitigation_summary": { "type": ["string", "null"] },
+    "workaround_summary": { "type": ["string", "null"] },
+    "attack_complexity": { "enum": ["low", "high", null] },
+    "attack_vector": { "enum": ["network", "adjacent", "local", "physical", null] },
+    "requires_user_interaction": { "type": ["boolean", "null"] },
+    "requires_authentication": { "enum": ["none", "low", "high", null] },
+    "scope_changed": { "type": ["boolean", "null"] },
+    "credit": { "type": "array", "items": { "type": "string" } },
+    "notes": { "type": ["string", "null"] }
+  }
+}
