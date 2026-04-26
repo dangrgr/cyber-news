@@ -146,6 +146,41 @@ export async function queryByStage(client: Client, stage: Stage, limit: number):
   }));
 }
 
+/**
+ * All articles tied to a given incident, oldest-published first. Phase 3 takes
+ * `[0]` as "source zero" — the triggering article whose extraction produced
+ * the incident row. Later indices are corroborating articles picked up by
+ * dedup. Returns [] if the incident has no articles (shouldn't happen in
+ * practice; published incidents always have at least one).
+ */
+export async function getArticlesByIncidentId(
+  client: Client,
+  incidentId: string,
+): Promise<ArticleRow[]> {
+  const res = await client.execute({
+    sql: `SELECT id, source_id, url, canonical_url, title, author, published_at,
+                 ingested_at, raw_text, stage_reached, failure_reason, incident_id
+            FROM articles
+           WHERE incident_id = ?
+        ORDER BY published_at ASC`,
+    args: [incidentId],
+  });
+  return res.rows.map((r) => ({
+    id: String(r.id),
+    source_id: String(r.source_id),
+    url: String(r.url),
+    canonical_url: String(r.canonical_url),
+    title: String(r.title),
+    author: r.author == null ? null : String(r.author),
+    published_at: String(r.published_at),
+    ingested_at: String(r.ingested_at),
+    raw_text: String(r.raw_text),
+    stage_reached: String(r.stage_reached) as Stage,
+    failure_reason: r.failure_reason == null ? null : String(r.failure_reason),
+    incident_id: r.incident_id == null ? null : String(r.incident_id),
+  }));
+}
+
 export async function setStage(
   client: Client,
   articleId: string,

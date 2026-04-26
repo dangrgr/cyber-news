@@ -14,12 +14,17 @@ Research background in docs/research-notes.md.
 
 - The entity YAML is hand-maintained. Never auto-generate or auto-update it.
 - Patterns produce strict JSON matching their schema.json. No freeform outputs
-  from extract/triage/factcheck.
+  from extract/triage/factcheck/vendor_doc_review. The `investigate` pattern
+  is the one exception: markdown body + trailing JSON footer (parsed in
+  `src/investigate/orchestrator.ts::parseFinalOutput`).
 - Attribution discipline in outputs: "claims" vs "reported" vs "confirmed" are
   distinct and never flattened.
-- Cost discipline: triage/extract/factcheck use Haiku-class; investigation uses
-  Sonnet. Models are env-var config, not hardcoded.
+- Cost discipline: triage/extract/factcheck/vendor_doc_review use Haiku-class;
+  investigation uses Sonnet. Models are env-var config, not hardcoded.
 - Fact-check is a publish gate. Failures go to logs, not to Discord.
+- Investigation runs via `messages.create` tool use (see
+  `src/investigate/orchestrator.ts`), not the beta Managed Agents API. The
+  `fetch_url` tool enforces a domain allowlist (`src/investigate/allowlist.ts`).
 
 # Build discipline
 

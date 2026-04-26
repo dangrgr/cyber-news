@@ -1,0 +1,78 @@
+name: Investigate
+
+# Phase 3: on-demand deep-dive investigation of a single incident.
+# workflow_dispatch only — triggered from GH mobile app or CLI with the
+# incident_id input. Commits the resulting markdown back to logs/.
+
+on:
+  workflow_dispatch:
+    inputs:
+      incident_id:
+        description: "Incident ID to investigate (e.g. inc-abc123...)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: investigate-${{ inputs.incident_id }}
+  cancel-in-progress: false
+
+jobs:
+  investigate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install
+        run: npm ci
+
+      - name: Apply migrations
+        run: npm run migrate
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+
+      - name: Run investigation
+        run: npm run investigate
+        env:
+          INCIDENT_ID: ${{ inputs.incident_id }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+          DISCORD_WEBHOOK_INVESTIGATIONS: ${{ secrets.DISCORD_WEBHOOK_INVESTIGATIONS }}
+          MODEL_INVESTIGATION: ${{ vars.MODEL_INVESTIGATION }}
+          MODEL_VENDOR_DOC_REVIEW: ${{ vars.MODEL_VENDOR_DOC_REVIEW }}
+          MAX_INVESTIGATION_COST_USD: ${{ vars.MAX_INVESTIGATION_COST_USD }}
+          MAX_INVESTIGATION_TOOL_CALLS: ${{ vars.MAX_INVESTIGATION_TOOL_CALLS }}
+
+      - name: Commit investigation log
+        if: always()
+        # INCIDENT_ID is read into the env so we never interpolate
+        # ${{ inputs.incident_id }} directly into a shell command line.
+        env:
+          INCIDENT_ID: ${{ inputs.incident_id }}
+        run: |
+          if [[ -n "$(git status --porcelain logs/investigations/)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add logs/investigations/
+            # Validate the id before it lands in a commit message, even though
+            # workflow_dispatch inputs are already privileged.
+            if [[ ! "$INCIDENT_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+              echo "Refusing to commit: INCIDENT_ID has unexpected characters." >&2
+              exit 1
+            fi
+            git commit -m "investigation: $INCIDENT_ID"
+            git push
+          else
+            echo "No investigation log to commit."
+          fi

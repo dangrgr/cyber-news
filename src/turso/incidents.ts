@@ -132,6 +132,73 @@ export async function setDiscordMessageId(client: Client, incidentId: string, me
   });
 }
 
+export type InvestigationStatus = IncidentRow["investigation_status"];
+
+export async function setInvestigationStatus(
+  client: Client,
+  incidentId: string,
+  status: InvestigationStatus,
+): Promise<void> {
+  await client.execute({
+    sql: `UPDATE incidents SET investigation_status = ?, last_updated_at = ? WHERE id = ?`,
+    args: [status, new Date().toISOString(), incidentId],
+  });
+}
+
+/**
+ * Filter incidents by actor, victim, CVE, or date range. Used by the
+ * investigation agent's `query_incidents` tool to pull related history
+ * (e.g. "other incidents attributed to ShinyHunters in the last 90 days").
+ * All fields are AND-combined; empty filter returns the most recent 20.
+ * Matches are case-insensitive substring against the JSON arrays.
+ */
+export interface IncidentFilter {
+  actor?: string;
+  victim?: string;
+  cve?: string;
+  since?: string; // ISO date, inclusive
+  until?: string; // ISO date, inclusive
+  limit?: number;
+}
+
+export async function queryByFilter(
+  client: Client,
+  filter: IncidentFilter,
+): Promise<IncidentRow[]> {
+  const clauses: string[] = [];
+  const args: Array<string | number> = [];
+  if (filter.actor) {
+    clauses.push(`(LOWER(threat_actors_attributed) LIKE ? OR LOWER(actors_mentioned) LIKE ?)`);
+    const needle = `%${filter.actor.toLowerCase()}%`;
+    args.push(needle, needle);
+  }
+  if (filter.victim) {
+    clauses.push(`(LOWER(victim_orgs_confirmed) LIKE ? OR LOWER(orgs_mentioned) LIKE ?)`);
+    const needle = `%${filter.victim.toLowerCase()}%`;
+    args.push(needle, needle);
+  }
+  if (filter.cve) {
+    clauses.push(`UPPER(cves) LIKE ?`);
+    args.push(`%${filter.cve.toUpperCase()}%`);
+  }
+  if (filter.since) {
+    clauses.push(`incident_date >= ?`);
+    args.push(filter.since);
+  }
+  if (filter.until) {
+    clauses.push(`incident_date <= ?`);
+    args.push(filter.until);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const limit = Math.max(1, Math.min(filter.limit ?? 20, 100));
+  args.push(limit);
+  const res = await client.execute({
+    sql: `SELECT * FROM incidents ${where} ORDER BY incident_date DESC NULLS LAST, first_seen_at DESC LIMIT ?`,
+    args,
+  });
+  return res.rows.map(rowToIncident);
+}
+
 export async function setCorroborationCounts(
   client: Client,
   incidentId: string,
