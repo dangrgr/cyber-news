@@ -9,6 +9,7 @@ import { createDiscordClient } from "../clients/discord.ts";
 import { createBraveClient } from "../clients/brave.ts";
 import { createNvdClient } from "../clients/nvd.ts";
 import { processPendingArticles } from "./process.ts";
+import { startRun } from "../util/run_log.ts";
 
 async function main(): Promise<void> {
   const webhook = process.env.DISCORD_WEBHOOK_NEWS;
@@ -16,21 +17,32 @@ async function main(): Promise<void> {
     throw new Error("DISCORD_WEBHOOK_NEWS env var is required");
   }
 
+  const log = startRun("process");
+
   const db = getClient();
   const anthropic = createAnthropicClient();
-  const discord = createDiscordClient({ webhookUrl: webhook });
+  const discord = createDiscordClient({ webhookUrl: webhook, runLog: log });
   const brave = createBraveClient();
   const nvd = createNvdClient();
 
-  const summary = await processPendingArticles({
-    db,
-    anthropic,
-    discord,
-    brave,
-    cveCache: { client: db, nvd },
-  });
+  // try/finally: a crash mid-pipeline must still flush partial NDJSON +
+  // append an INDEX row so the failure is visible to the read-only agent.
+  try {
+    const summary = await processPendingArticles({
+      db,
+      anthropic,
+      discord,
+      brave,
+      cveCache: { client: db, nvd },
+      runLog: log,
+    });
 
-  console.log(JSON.stringify({ process: "complete", ...summary }));
+    await log.finishRun(summary as unknown as Record<string, unknown>);
+    console.log(JSON.stringify({ process: "complete", ...summary }));
+  } catch (err) {
+    await log.finishRun({ error: err instanceof Error ? err.message : String(err) });
+    throw err;
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

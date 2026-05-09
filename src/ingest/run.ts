@@ -26,6 +26,7 @@ import {
   loadAliasesIntoTable,
 } from "../turso/articles.ts";
 import { loadEntities, flattenAliases } from "../entities/load.ts";
+import { startRun } from "../util/run_log.ts";
 
 const DEDUP_LOOKBACK_DAYS = 30;
 
@@ -149,8 +150,9 @@ export async function runIngest(): Promise<RunStats[]> {
 
 const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
+  const log = startRun("ingest");
   runIngest()
-    .then((stats) => {
+    .then(async (stats) => {
       const summary = stats.reduce(
         (acc, s) => {
           acc.fetched += s.fetched;
@@ -162,10 +164,13 @@ if (isMain) {
         },
         { fetched: 0, duplicates: 0, pre_filtered: 0, passed_to_triage: 0, error_count: 0 },
       );
+      await log.finishRun({ per_source: stats, totals: summary });
       console.log(JSON.stringify({ run: "ingest", per_source: stats, totals: summary }, null, 2));
     })
-    .catch((err) => {
-      console.error(JSON.stringify({ run: "ingest", fatal: err instanceof Error ? err.message : String(err) }));
+    .catch(async (err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      await log.finishRun({ error: message });
+      console.error(JSON.stringify({ run: "ingest", fatal: message }));
       process.exit(1);
     });
 }

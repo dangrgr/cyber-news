@@ -15,6 +15,8 @@ import { runMigrations } from "../../scripts/migrate.ts";
 import { insertArticle } from "../../src/turso/articles.ts";
 import { processPendingArticles } from "../../src/pipeline/process.ts";
 import { resetPatternCaches } from "../../src/patterns/runner.ts";
+import { createDiscordClient } from "../../src/clients/discord.ts";
+import type { RunLogger } from "../../src/util/run_log.ts";
 
 let db: Client;
 
@@ -333,6 +335,98 @@ describe("processPendingArticles: MAX_PROCESS_BATCH parsing", () => {
       },
     });
     assert.equal(summary.processed, 3, "empty MAX_PROCESS_BATCH should fall back to default, not 0");
+  });
+});
+
+describe("processPendingArticles: DRY_RUN at the discord chokepoint", () => {
+  it("DRY_RUN=1 short-circuits fetch and emits discord_payload events with dry_run=true", async () => {
+    await seedArticle(db, { id: "art-dryrun" });
+
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "process",
+          novel: true,
+          significant: true,
+          duplicate_of: null,
+          reason: "named victim and actor",
+        }),
+      extract: () =>
+        JSON.stringify({
+          title: "T",
+          summary: "S",
+          victim_orgs_confirmed: ["Cisco"],
+          orgs_mentioned: [],
+          threat_actors_attributed: ["ShinyHunters"],
+          actors_mentioned: [],
+          cves: [],
+          initial_access_vector: null,
+          ttps: [],
+          impact: {
+            affected_count: null,
+            affected_count_unit: null,
+            data_exfil_size: null,
+            sector: null,
+            geographic_scope: null,
+            service_disruption: null,
+          },
+          incident_date: "2026-04-20",
+          confidence: "reported",
+          claim_markers_observed: [],
+          primary_source: "article_itself",
+        }),
+      factcheck: () => JSON.stringify({ overall: "pass", issues: [] }),
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => {
+        events.push(e);
+      },
+      finishRun: async () => {},
+    };
+
+    let fetchCalls = 0;
+    const fetchSpy: typeof globalThis.fetch = async () => {
+      fetchCalls++;
+      return new Response(JSON.stringify({ id: "should-not-be-used" }), { status: 200 });
+    };
+
+    // Real discord client wired with DRY_RUN env + runLog. The chokepoint
+    // is here, not in higher-level publishers — the whole point of DRY_RUN.
+    const discord = createDiscordClient({
+      webhookUrl: "https://discord.com/api/webhooks/X/Y",
+      fetch: fetchSpy,
+      env: { DRY_RUN: "1" },
+      runLog,
+    });
+
+    const summary = await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord,
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+
+    assert.equal(summary.published, 1);
+    assert.equal(fetchCalls, 0, "DRY_RUN must short-circuit before fetch");
+
+    const discordEvents = events.filter((e) => e.event === "discord_payload");
+    assert.ok(discordEvents.length >= 1, "expected at least one discord_payload event");
+    for (const ev of discordEvents) {
+      assert.equal(ev.dry_run, true);
+      assert.equal(typeof ev.payload_digest, "string");
+    }
   });
 });
 

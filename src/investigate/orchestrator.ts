@@ -28,6 +28,11 @@ import {
   type ConfidenceOverall,
 } from "./types.ts";
 import { INVESTIGATION_TOOLS, type ToolRegistry } from "./tools.ts";
+import {
+  DEFAULT_SONNET_RATES,
+  computeCost as computeCostUtil,
+  type ModelRates,
+} from "../util/cost.ts";
 
 export interface OrchestratorDeps {
   client: MessagesWithToolsClient;
@@ -41,17 +46,10 @@ export interface OrchestratorDeps {
   maxOutputTokens?: number;
 }
 
-export interface CostRates {
-  inputPerMillion: number;
-  outputPerMillion: number;
-}
+// Backwards-compatible alias. Canonical type lives in src/util/cost.ts.
+export type CostRates = ModelRates;
 
-// claude-sonnet-4-6 pricing (USD / 1M tokens) as of this writing.
-// If the model env var points elsewhere, pass costRates explicitly.
-export const DEFAULT_SONNET_RATES: CostRates = {
-  inputPerMillion: 3,
-  outputPerMillion: 15,
-};
+export { DEFAULT_SONNET_RATES };
 
 const MAX_AGENTIC_ITERATIONS = 30;
 
@@ -257,9 +255,7 @@ function accumulateText(resp: MessagesWithToolsResponse, prior: string): string 
 }
 
 function computeCost(resp: MessagesWithToolsResponse, rates: CostRates): number {
-  const ins = resp.usage.input_tokens / 1_000_000;
-  const outs = resp.usage.output_tokens / 1_000_000;
-  return ins * rates.inputPerMillion + outs * rates.outputPerMillion;
+  return computeCostUtil(resp.usage.input_tokens, resp.usage.output_tokens, rates);
 }
 
 function round2(n: number): number {
