@@ -24,43 +24,44 @@ are the answer, not Discord export.
 
 ## Items (priority order)
 
-### 1. Persisted run logs (foundational)
-- [ ] New `src/util/run_log.ts`: `startRun(stage)` → `runId`; `logCall(...)`;
-      `finishRun(summary)`. Writes NDJSON to
-      `logs/runs/{YYYY-MM-DD}/{stage}-{runId}.ndjson`.
-- [ ] Line schema: `{ts, run_id, stage, event, model?, input_tokens?,
-      output_tokens?, cost_usd?, duration_ms?, error?, payload_digest?}`.
-- [ ] Extract cost rates from `src/investigate/orchestrator.ts`
-      (`DEFAULT_SONNET_RATES`) into `src/util/cost.ts` first; share between
-      investigation and run-log.
-- [ ] Wire into `src/patterns/runner.ts` — one call site covers all patterns.
-- [ ] Wire run-level start/finish into `src/pipeline/run_process.ts` and
-      `src/ingest/run.ts`.
-- [ ] `logs/runs/` added to `.gitignore`. Workflows opt in to commit a
-      redacted `summary.md` (see #5).
-- [ ] Fixture test in `tests/util/run_log.test.ts`.
+### 1. Persisted run logs (foundational) — shipped #12
+- [x] `src/util/run_log.ts`: `startRun(stage)` → `runId`; `logCall(...)`;
+      `finishRun(summary)`. NDJSON at `logs/runs/{YYYY-MM-DD}/{stage}-{runId}.ndjson`.
+- [x] Schema-versioned line format with `schema_version: 1`.
+- [x] Cost rates extracted into `src/util/cost.ts`, shared with investigation.
+- [x] Wired into `src/patterns/runner.ts` (covers all patterns) +
+      `src/pipeline/run_process.ts` + `src/ingest/run.ts`.
+- [x] NDJSON committed to git (`logs/runs/` is intentionally tracked, not
+      gitignored). INDEX.ndjson is the discovery surface.
+- [x] `RUN_LOG_DISABLED=1` kill-switch + fixture tests.
 
-### 2. Capture Discord payloads + dry-run
-- [ ] In `src/discord/*.ts` (webhook publishers), append the embed JSON to
-      the current run log (`event: "discord_payload"`) on every send.
-- [ ] Add `DRY_RUN=1` env flag (or `--no-publish` CLI flag) to short-circuit
-      the actual webhook POST. Pipeline still runs end-to-end and writes
-      run logs; channel stays clean.
-- [ ] Document in CLAUDE.md under a "Local development" subsection.
+### 2. Capture Discord payloads + dry-run — shipped #12
+- [x] DRY_RUN at the HTTP chokepoint (`src/clients/discord.ts`).
+      `discord_payload` events emitted on every send.
+- [x] `DRY_RUN=1` env short-circuits POST/PATCH before `withRetry`.
+- [x] Documented in `CLAUDE.md` under "Local development".
 
-### 3. Per-stage cost/token rollup in `ProcessSummary`
-- [ ] Extend `ProcessSummary` with per-stage breakdown:
-      `{triage|extract|factcheck: {calls, input_tokens, output_tokens,
-      cost_usd}}`. Aggregated from the run log.
-- [ ] Surface in stdout JSON and as a final `event: "run_summary"` NDJSON
-      line (so summary is in the same file as the per-call detail).
+### 3. Per-stage cost/token rollup in `ProcessSummary` — shipped #13
+- [x] `ProcessSummary.costs.{triage,extract,factcheck,total}` with
+      `{calls, input_tokens, output_tokens, cost_usd}`. `total` = sum of stages.
+- [x] `article_done` events emitted per article with `terminal_state` and
+      per-stage metrics.
+- [x] `model_calls` kept one release as back-compat alias for `costs.total.calls`.
 
-### 4. Failure log surface
-- [ ] On `factcheck_failed` / `triage_rejected` / pattern parse errors,
-      write a full record to the run log: article_id, stage, reason, raw
-      model output (or first 500 chars), `stage_reached`.
-- [ ] Today these are buried in `articles.failure_reason`. Goal: grep-able
-      from `logs/runs/` without DB access.
+### 4. Failure log surface (in flight)
+- [x] `src/pipeline/failure_codes.ts` — stable `FailureCode` enum +
+      `mapTriageReason` / `mapDeterministicKind` / `mapReconcileReason` /
+      `failureCodeFromError`.
+- [x] `pattern_parse_error` events emitted from `src/patterns/runner.ts` on
+      JSON-parse and schema-validation throws (with full `raw_output`).
+- [x] Dedicated failure events (`triage_rejected`, `factcheck_failed`,
+      `article_error`) emitted at the 4 failure sites in
+      `src/pipeline/process.ts` with `failure_code` + `failure_reason`.
+- [x] `article_done` extended with `failure_code` / `failure_codes` /
+      `failure_reason` on failure paths.
+- [ ] Tighten `patterns/triage/schema.json` with a `reason_code` enum
+      (follow-up; current keyword matcher in `mapTriageReason` falls back
+      to `triage_unhandled` for unrecognized strings).
 
 ### 5. GitHub Actions log capture
 - [ ] After each scheduled run, the workflow writes
