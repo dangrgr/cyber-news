@@ -505,3 +505,211 @@ describe("processPendingArticles: mixed batch", () => {
     assert.equal(discord.posts.length, 1);
   });
 });
+
+describe("processPendingArticles: per-stage cost rollup + article_done events (PR 2)", () => {
+  it("accumulates per-stage costs, sets total = sum of stages, and emits one article_done per article", async () => {
+    await seedArticle(db, { id: "art-cost-pub" });
+    await seedArticle(db, { id: "art-cost-skip" });
+    await seedArticle(db, { id: "art-cost-fcfail" });
+
+    const anthropic = routedAnthropic({
+      triage: (sys) => {
+        if (sys.includes("art-cost-skip")) {
+          return JSON.stringify({
+            decision: "skip",
+            novel: false,
+            significant: false,
+            duplicate_of: null,
+            reason: "skip",
+          });
+        }
+        return JSON.stringify({
+          decision: "process",
+          novel: true,
+          significant: true,
+          duplicate_of: null,
+          reason: "ok",
+        });
+      },
+      extract: (sys) => {
+        const inc = sys.includes("art-cost-fcfail") ? "2024-01-01" : "2026-04-20";
+        return JSON.stringify({
+          title: "T",
+          summary: "S",
+          victim_orgs_confirmed: ["Cisco"],
+          orgs_mentioned: [],
+          threat_actors_attributed: ["ShinyHunters"],
+          actors_mentioned: [],
+          cves: [],
+          initial_access_vector: null,
+          ttps: [],
+          impact: {
+            affected_count: null,
+            affected_count_unit: null,
+            data_exfil_size: null,
+            sector: null,
+            geographic_scope: null,
+            service_disruption: null,
+          },
+          incident_date: inc,
+          confidence: "reported",
+          claim_markers_observed: [],
+          primary_source: "article_itself",
+        });
+      },
+      factcheck: () => JSON.stringify({ overall: "pass", issues: [] }),
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => {
+        events.push(e);
+      },
+      finishRun: async () => {},
+    };
+
+    const discord = recordingDiscord();
+    const summary = await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord,
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+
+    // ----- ProcessSummary shape -----
+    assert.ok(summary.costs, "summary.costs must exist");
+    assert.ok(summary.costs.triage, "triage costs bucket present");
+    assert.ok(summary.costs.extract, "extract costs bucket present");
+    assert.ok(summary.costs.factcheck, "factcheck costs bucket present");
+    assert.ok(summary.costs.total, "total costs bucket present");
+
+    // Three articles → three triage calls.
+    assert.equal(summary.costs.triage.calls, 3);
+    // One published + one factcheck-failed (extract was attempted) → 2 extract calls.
+    assert.equal(summary.costs.extract.calls, 2);
+    // Only the published article reaches LLM factcheck (deterministic short-circuits the other).
+    assert.equal(summary.costs.factcheck.calls, 1);
+
+    // total = sum of stages
+    assert.equal(
+      summary.costs.total.calls,
+      summary.costs.triage.calls + summary.costs.extract.calls + summary.costs.factcheck.calls,
+    );
+    assert.equal(
+      summary.costs.total.input_tokens,
+      summary.costs.triage.input_tokens +
+        summary.costs.extract.input_tokens +
+        summary.costs.factcheck.input_tokens,
+    );
+    assert.equal(
+      summary.costs.total.output_tokens,
+      summary.costs.triage.output_tokens +
+        summary.costs.extract.output_tokens +
+        summary.costs.factcheck.output_tokens,
+    );
+    // Each mocked call returns 100 in / 50 out tokens at Haiku rates ($1/M in, $5/M out)
+    // → $0.0001 + $0.00025 = $0.00035 per call.
+    const expectedTotal = summary.costs.total.calls * 0.00035;
+    assert.ok(
+      Math.abs(summary.costs.total.cost_usd - expectedTotal) < 1e-9,
+      `total cost ${summary.costs.total.cost_usd} ~ expected ${expectedTotal}`,
+    );
+
+    // model_calls preserves backward-compat shape and equals total.calls.
+    assert.equal(summary.model_calls, summary.costs.total.calls);
+
+    // ----- article_done events -----
+    const articleDones = events.filter((e) => e.event === "article_done");
+    assert.equal(articleDones.length, 3, "one article_done per article");
+
+    const byTerminalState = new Map<string, Record<string, unknown>>();
+    for (const ev of articleDones) {
+      assert.equal(typeof ev.article_id, "string");
+      assert.equal(typeof ev.article_url, "string");
+      assert.equal(ev.source_id, "krebs");
+      assert.equal(typeof ev.duration_ms, "number");
+      assert.ok(ev.stages, "stages object present");
+      byTerminalState.set(String(ev.terminal_state), ev);
+    }
+
+    assert.ok(byTerminalState.has("published"));
+    assert.ok(byTerminalState.has("triage_rejected"));
+    assert.ok(byTerminalState.has("factcheck_failed"));
+
+    // Published article touched all three stages.
+    const pubStages = (byTerminalState.get("published") as { stages: Record<string, unknown> }).stages;
+    assert.ok(pubStages.triage, "published article has triage stage");
+    assert.ok(pubStages.extract, "published article has extract stage");
+    assert.ok(pubStages.factcheck, "published article has factcheck stage");
+
+    // Triage-rejected article only touched triage.
+    const skipStages = (byTerminalState.get("triage_rejected") as { stages: Record<string, unknown> })
+      .stages;
+    assert.ok(skipStages.triage);
+    assert.equal(skipStages.extract, undefined);
+    assert.equal(skipStages.factcheck, undefined);
+
+    // Factcheck-failed (deterministic short-circuit) touched triage + extract but not LLM factcheck.
+    const failStages = (byTerminalState.get("factcheck_failed") as { stages: Record<string, unknown> })
+      .stages;
+    assert.ok(failStages.triage);
+    assert.ok(failStages.extract);
+    assert.equal(failStages.factcheck, undefined);
+  });
+
+  it("emits article_done with terminal_state='error' when an unhandled exception bubbles", async () => {
+    await seedArticle(db, { id: "art-boom" });
+
+    const anthropic: AnthropicClient = {
+      async messagesCreate() {
+        // Throw a non-pattern error (not a parse/schema error) so it propagates
+        // out of processOne into the outer catch.
+        throw new Error("kaboom: simulated upstream failure");
+      },
+    };
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => {
+        events.push(e);
+      },
+      finishRun: async () => {},
+    };
+
+    const discord = recordingDiscord();
+    const summary = await processPendingArticles({
+      db,
+      anthropic,
+      discord,
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+
+    assert.equal(summary.processed, 1);
+    assert.equal(summary.factcheck_failed, 1);
+
+    const articleDones = events.filter((e) => e.event === "article_done");
+    assert.equal(articleDones.length, 1);
+    assert.equal(articleDones[0]!.terminal_state, "error");
+    assert.equal(articleDones[0]!.article_id, "art-boom");
+  });
+});
