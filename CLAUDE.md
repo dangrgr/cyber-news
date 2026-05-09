@@ -38,3 +38,12 @@ Research background in docs/research-notes.md.
 - TypeScript. Bun or Node 20+. Minimal dependencies.
 - Errors are logged with stage_reached; we never swallow exceptions silently.
 - Comments explain why, not what.
+
+# Local development
+
+- `DRY_RUN=1` — short-circuits Discord webhook POST/PATCH at the HTTP
+  chokepoint (`src/clients/discord.ts`). Nothing is sent. The intended
+  payload is still recorded as a `discord_payload` event in the run log.
+- `RUN_LOG_DISABLED=1` — kill-switch for the NDJSON run logger
+  (`src/util/run_log.ts`). `startRun()` returns the NOOP_LOGGER and no files
+  are written under `logs/runs/`. Pipeline behavior is otherwise identical.

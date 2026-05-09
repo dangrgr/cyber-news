@@ -4,6 +4,10 @@ dist/
 .env
 .env.local
 
+# logs/runs/ is intentionally NOT ignored — per-run NDJSON + INDEX.ndjson are
+# committed (see docs/observability-plan.md). The `*.log` rule above only
+# matches `.log` files, so `.ndjson` files under logs/runs/ are tracked.
+
 # Local libsql files used by `migrate` / `ingest` against `file:` URLs
 *.db
 *.db-journal

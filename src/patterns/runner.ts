@@ -7,10 +7,13 @@
 //   not retry silently.
 
 import { readFile as fsReadFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 
 import type { AnthropicClient } from "../clients/anthropic.ts";
 import { renderTemplate } from "./template.ts";
 import { validate, type JsonSchema, type JsonValue } from "./validator.ts";
+import { computeCost, ratesForModel } from "../util/cost.ts";
+import type { RunLogger } from "../util/run_log.ts";
 
 export interface PatternDefinition<TInput, TOutput> {
   name: "triage" | "extract" | "factcheck" | "vendor_doc_review";
@@ -29,6 +32,10 @@ export interface RunnerDeps {
   readFile?: (path: string) => Promise<string>;
   env?: NodeJS.ProcessEnv;
   maxOutputTokens?: number;
+  /** Optional run logger. When provided, every `messages.create` call is
+   *  emitted as a `model_call` event. Non-breaking: existing call sites
+   *  without a logger continue to work. */
+  runLog?: RunLogger;
 }
 
 export interface PatternRunResult<TOutput> {
@@ -97,39 +104,71 @@ export async function runPattern<I, O>(
 
   const userNudge = "Respond with a single JSON object matching the schema. No prose, no code fences.";
 
+  const firstMessages = [{ role: "user" as const, content: userNudge }];
+  const t0 = Date.now();
   const firstResp = await deps.anthropic.messagesCreate({
     model,
     system: rendered,
-    messages: [{ role: "user", content: userNudge }],
+    messages: firstMessages,
     maxTokens: deps.maxOutputTokens ?? 4096,
     temperature: 0,
   });
+  logModelCall(deps.runLog, firstResp, rendered, firstMessages, Date.now() - t0);
 
   const firstParsed = tryParseJson(firstResp.text);
   if (firstParsed.ok) {
     return finalize(def, schema, firstResp, firstParsed.value, 0);
   }
 
+  const retryMessages = [
+    { role: "user" as const, content: userNudge },
+    { role: "assistant" as const, content: firstResp.text },
+    {
+      role: "user" as const,
+      content: "Your previous response was not valid JSON. Respond with raw JSON only, no code fences, no prose.",
+    },
+  ];
+  const t1 = Date.now();
   const retryResp = await deps.anthropic.messagesCreate({
     model,
     system: rendered,
-    messages: [
-      { role: "user", content: userNudge },
-      { role: "assistant", content: firstResp.text },
-      {
-        role: "user",
-        content: "Your previous response was not valid JSON. Respond with raw JSON only, no code fences, no prose.",
-      },
-    ],
+    messages: retryMessages,
     maxTokens: deps.maxOutputTokens ?? 4096,
     temperature: 0,
   });
+  logModelCall(deps.runLog, retryResp, rendered, retryMessages, Date.now() - t1);
 
   const retryParsed = tryParseJson(retryResp.text);
   if (!retryParsed.ok) {
     throw new PatternMalformedJsonError(def.name, retryResp.text, retryParsed.error);
   }
   return finalize(def, schema, retryResp, retryParsed.value, 1);
+}
+
+function logModelCall(
+  runLog: RunLogger | undefined,
+  resp: { text: string; usage: { input_tokens: number; output_tokens: number }; model: string },
+  system: string,
+  messages: ReadonlyArray<{ role: string; content: string }>,
+  duration_ms: number,
+): void {
+  if (!runLog) return;
+  const rates = ratesForModel(resp.model);
+  // SHA-256 of canonical JSON, first 16 hex chars: enough entropy for
+  // intra-run correlation without depending on external libs.
+  const digest = createHash("sha256")
+    .update(JSON.stringify({ system, messages }))
+    .digest("hex")
+    .slice(0, 16);
+  runLog.logCall({
+    model: resp.model,
+    input_tokens: resp.usage.input_tokens,
+    output_tokens: resp.usage.output_tokens,
+    cost_usd: computeCost(resp.usage.input_tokens, resp.usage.output_tokens, rates),
+    duration_ms,
+    payload_digest: digest,
+    raw_output: resp.text,
+  });
 }
 
 function finalize<I, O>(

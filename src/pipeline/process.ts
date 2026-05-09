@@ -46,6 +46,7 @@ import {
 import { insertIncident, getIncident, addSourceToIncident } from "../turso/incidents.ts";
 
 import { getSourceByCanonicalUrl } from "../ingest/sources.ts";
+import type { RunLogger } from "../util/run_log.ts";
 
 export interface ProcessDeps {
   db: Client;
@@ -61,6 +62,9 @@ export interface ProcessDeps {
   entitiesPath?: string;
   /** Injectable clock for tests. */
   now?: () => Date;
+  /** Optional run logger; threaded into runPattern so model calls show up
+   *  as `model_call` events in the per-run NDJSON. */
+  runLog?: RunLogger;
 }
 
 export interface ProcessSummary {
@@ -134,7 +138,7 @@ async function processOne(
   entities: Awaited<ReturnType<typeof loadEntities>>,
 ): Promise<ProcessOneResult> {
   let modelCalls = 0;
-  const anthropicDeps = { anthropic: deps.anthropic, env };
+  const anthropicDeps = { anthropic: deps.anthropic, env, runLog: deps.runLog };
 
   // ---- Triage ----
   const triage = await runPattern<typeof TRIAGE_PATTERN extends typeof TRIAGE_PATTERN ? Parameters<typeof TRIAGE_PATTERN.buildPlaceholders>[0] : never, TriageOutput>(
