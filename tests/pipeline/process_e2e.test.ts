@@ -713,3 +713,190 @@ describe("processPendingArticles: per-stage cost rollup + article_done events (P
     assert.equal(articleDones[0]!.article_id, "art-boom");
   });
 });
+
+describe("processPendingArticles: failure codes (PR 3)", () => {
+  it("triage skip stamps mapped failure_code on article_done and emits dedicated triage_rejected event", async () => {
+    await seedArticle(db, { id: "art-skip-marketing" });
+
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "skip",
+          novel: false,
+          significant: false,
+          duplicate_of: null,
+          reason: "Vendor marketing content.",
+        }),
+      extract: () => "{}",
+      factcheck: () => "{}",
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => {
+        events.push(e);
+      },
+      finishRun: async () => {},
+    };
+
+    await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord: recordingDiscord(),
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+
+    const triageEvents = events.filter((e) => e.event === "triage_rejected");
+    assert.equal(triageEvents.length, 1);
+    assert.equal(triageEvents[0]!.failure_code, "triage_vendor_marketing");
+    assert.match(String(triageEvents[0]!.failure_reason), /Vendor marketing/);
+
+    const articleDones = events.filter((e) => e.event === "article_done");
+    assert.equal(articleDones.length, 1);
+    assert.equal(articleDones[0]!.terminal_state, "triage_rejected");
+    assert.equal(articleDones[0]!.failure_code, "triage_vendor_marketing");
+  });
+
+  it("deterministic date-window failure emits factcheck_failed with failure_codes array and stamps article_done", async () => {
+    await seedArticle(db, { id: "art-fc-date" });
+
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "process",
+          novel: true,
+          significant: true,
+          duplicate_of: null,
+          reason: "valid",
+        }),
+      extract: () =>
+        JSON.stringify({
+          title: "T",
+          summary: "S",
+          victim_orgs_confirmed: ["Cisco"],
+          orgs_mentioned: [],
+          threat_actors_attributed: ["ShinyHunters"],
+          actors_mentioned: [],
+          cves: [],
+          initial_access_vector: null,
+          ttps: [],
+          impact: {
+            affected_count: null,
+            affected_count_unit: null,
+            data_exfil_size: null,
+            sector: null,
+            geographic_scope: null,
+            service_disruption: null,
+          },
+          incident_date: "2024-01-01", // outside [pub-90d, pub+7d]
+          confidence: "reported",
+          claim_markers_observed: [],
+          primary_source: "article_itself",
+        }),
+      factcheck: () => JSON.stringify({ overall: "pass", issues: [] }),
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => {
+        events.push(e);
+      },
+      finishRun: async () => {},
+    };
+
+    await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord: recordingDiscord(),
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+
+    const fcEvents = events.filter((e) => e.event === "factcheck_failed");
+    assert.equal(fcEvents.length, 1);
+    assert.equal(fcEvents[0]!.failure_code, "factcheck_date_out_of_window");
+    assert.equal(fcEvents[0]!.stage_reached, "factcheck_deterministic");
+    assert.deepEqual(fcEvents[0]!.failure_codes, ["factcheck_date_out_of_window"]);
+
+    const articleDones = events.filter((e) => e.event === "article_done");
+    assert.equal(articleDones.length, 1);
+    assert.equal(articleDones[0]!.terminal_state, "factcheck_failed");
+    assert.equal(articleDones[0]!.failure_code, "factcheck_date_out_of_window");
+  });
+
+  it("malformed JSON from a pattern emits pattern_parse_error and article_error with raw_model_output", async () => {
+    await seedArticle(db, { id: "art-malformed" });
+
+    // Triage returns garbage on every attempt — runner retries once then throws
+    // PatternMalformedJsonError, which the outer catch turns into terminal=error.
+    const anthropic: AnthropicClient = {
+      async messagesCreate(params) {
+        return {
+          text: "this is not json at all { ::: ",
+          usage: { input_tokens: 10, output_tokens: 5 },
+          model: params.model,
+        };
+      },
+    };
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => {
+        events.push(e);
+      },
+      finishRun: async () => {},
+    };
+
+    await processPendingArticles({
+      db,
+      anthropic,
+      discord: recordingDiscord(),
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+
+    const parseErrors = events.filter((e) => e.event === "pattern_parse_error");
+    assert.equal(parseErrors.length, 1, "runner should emit one pattern_parse_error after retry");
+    assert.equal(parseErrors[0]!.error_kind, "json_parse");
+    assert.equal(parseErrors[0]!.pattern, "triage");
+    assert.match(String(parseErrors[0]!.raw_output), /not json/);
+
+    const articleErrors = events.filter((e) => e.event === "article_error");
+    assert.equal(articleErrors.length, 1);
+    assert.equal(articleErrors[0]!.failure_code, "pattern_json_invalid");
+    assert.match(String(articleErrors[0]!.raw_model_output), /not json/);
+
+    const articleDones = events.filter((e) => e.event === "article_done");
+    assert.equal(articleDones.length, 1);
+    assert.equal(articleDones[0]!.terminal_state, "error");
+    assert.equal(articleDones[0]!.failure_code, "pattern_json_invalid");
+  });
+});

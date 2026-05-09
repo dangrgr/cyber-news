@@ -131,12 +131,17 @@ export async function runPattern<I, O>(
 
   const firstParsed = tryParseJson(firstResp.text);
   if (firstParsed.ok) {
-    return finalize(def, schema, firstResp, firstParsed.value, 0, {
-      input_tokens: firstResp.usage.input_tokens,
-      output_tokens: firstResp.usage.output_tokens,
-      cost_usd: firstCost,
-      duration_ms: firstDuration,
-    });
+    try {
+      return finalize(def, schema, firstResp, firstParsed.value, 0, {
+        input_tokens: firstResp.usage.input_tokens,
+        output_tokens: firstResp.usage.output_tokens,
+        cost_usd: firstCost,
+        duration_ms: firstDuration,
+      });
+    } catch (err) {
+      maybeLogParseError(deps.runLog, def.name, err);
+      throw err;
+    }
   }
 
   const retryMessages = [
@@ -165,14 +170,43 @@ export async function runPattern<I, O>(
 
   const retryParsed = tryParseJson(retryResp.text);
   if (!retryParsed.ok) {
+    deps.runLog?.logEvent({
+      event: "pattern_parse_error",
+      pattern: def.name,
+      error_kind: "json_parse",
+      raw_output: retryResp.text,
+      error: retryParsed.error,
+    });
     throw new PatternMalformedJsonError(def.name, retryResp.text, retryParsed.error);
   }
-  return finalize(def, schema, retryResp, retryParsed.value, 1, {
-    input_tokens: firstResp.usage.input_tokens + retryResp.usage.input_tokens,
-    output_tokens: firstResp.usage.output_tokens + retryResp.usage.output_tokens,
-    cost_usd: firstCost + retryCost,
-    duration_ms: firstDuration + retryDuration,
-  });
+  try {
+    return finalize(def, schema, retryResp, retryParsed.value, 1, {
+      input_tokens: firstResp.usage.input_tokens + retryResp.usage.input_tokens,
+      output_tokens: firstResp.usage.output_tokens + retryResp.usage.output_tokens,
+      cost_usd: firstCost + retryCost,
+      duration_ms: firstDuration + retryDuration,
+    });
+  } catch (err) {
+    maybeLogParseError(deps.runLog, def.name, err);
+    throw err;
+  }
+}
+
+function maybeLogParseError(
+  runLog: RunLogger | undefined,
+  patternName: string,
+  err: unknown,
+): void {
+  if (!runLog) return;
+  if (err instanceof PatternSchemaError) {
+    runLog.logEvent({
+      event: "pattern_parse_error",
+      pattern: patternName,
+      error_kind: "schema_invalid",
+      raw_output: err.raw,
+      error: err.errors.map((e) => `${e.path} ${e.message}`).join("; "),
+    });
+  }
 }
 
 interface CallTotals {

@@ -17,7 +17,12 @@ import type { DiscordClient } from "../clients/discord.ts";
 
 import { loadEntities, flattenAliases } from "../entities/load.ts";
 
-import { runPattern, type PatternRunResult } from "../patterns/runner.ts";
+import {
+  runPattern,
+  type PatternRunResult,
+  PatternMalformedJsonError,
+  PatternSchemaError,
+} from "../patterns/runner.ts";
 import { TRIAGE_PATTERN, EXTRACT_PATTERN, FACTCHECK_PATTERN } from "../patterns/registry.ts";
 import type {
   ExtractionOutput,
@@ -28,6 +33,13 @@ import type {
 import { chunkArticle } from "./chunk.ts";
 import { mergeExtractions } from "./merge_extraction.ts";
 import { resolveEntities } from "./entity_resolve.ts";
+import {
+  failureCodeFromError,
+  mapDeterministicKind,
+  mapReconcileReason,
+  mapTriageReason,
+  type FailureCode,
+} from "./failure_codes.ts";
 
 import { runDeterministic } from "../factcheck/deterministic.ts";
 import { cveExists, type CveCacheDeps } from "../factcheck/cve_cache.ts";
@@ -147,11 +159,17 @@ export async function processPendingArticles(deps: ProcessDeps): Promise<Process
     const articleStart = Date.now();
     const stages: { triage?: StageMetric; extract?: StageMetric; factcheck?: StageMetric } = {};
     let terminal: TerminalState = "error";
+    let failure_code: FailureCode | undefined;
+    let failure_codes: FailureCode[] | undefined;
+    let failure_reason: string | undefined;
     try {
       const result = await processOne(article, deps, env, entities, stages);
       addStage(summary.costs.triage, result.stageCosts.triage);
       addStage(summary.costs.extract, result.stageCosts.extract);
       addStage(summary.costs.factcheck, result.stageCosts.factcheck);
+      failure_code = result.failure_code;
+      failure_codes = result.failure_codes;
+      failure_reason = result.failure_reason;
       switch (result.kind) {
         case "triage_rejected":
           summary.triage_rejected++;
@@ -173,6 +191,24 @@ export async function processPendingArticles(deps: ProcessDeps): Promise<Process
       await setStage(deps.db, article.id, "factcheck_failed", `unhandled:${msg.slice(0, 200)}`);
       summary.factcheck_failed++;
       terminal = "error";
+      failure_code = failureCodeFromError(err);
+      failure_reason = msg;
+      // Pattern errors carry the raw model output on the error object;
+      // surface it on the failure event so the agent can grep for it
+      // without parsing stack traces from earlier model_call lines.
+      const raw_model_output =
+        err instanceof PatternMalformedJsonError || err instanceof PatternSchemaError
+          ? err.raw
+          : undefined;
+      deps.runLog?.logEvent({
+        event: "article_error",
+        article_id: article.id,
+        article_url: article.url,
+        source_id: article.source_id,
+        failure_code,
+        failure_reason: msg,
+        ...(raw_model_output !== undefined ? { raw_model_output } : {}),
+      });
     }
     deps.runLog?.logEvent({
       event: "article_done",
@@ -182,6 +218,9 @@ export async function processPendingArticles(deps: ProcessDeps): Promise<Process
       terminal_state: terminal,
       duration_ms: Date.now() - articleStart,
       stages,
+      ...(failure_code !== undefined ? { failure_code } : {}),
+      ...(failure_codes !== undefined ? { failure_codes } : {}),
+      ...(failure_reason !== undefined ? { failure_reason } : {}),
     });
   }
 
@@ -197,6 +236,15 @@ export async function processPendingArticles(deps: ProcessDeps): Promise<Process
 interface ProcessOneResult {
   kind: "triage_rejected" | "factcheck_failed" | "published";
   stageCosts: { triage: StageCosts; extract: StageCosts; factcheck: StageCosts };
+  /** Primary failure code (first kind, for deterministic multi-kind cases).
+   *  Undefined on the published path. */
+  failure_code?: FailureCode;
+  /** All failure codes for the deterministic gate (which can flag several
+   *  kinds at once). Undefined on single-code paths. */
+  failure_codes?: FailureCode[];
+  /** Free-form reason string preserved for grep-ability. Mirrors what
+   *  goes into `articles.failure_reason`. Undefined on the published path. */
+  failure_reason?: string;
 }
 
 async function processOne(
@@ -239,8 +287,16 @@ async function processOne(
   };
 
   if (triage.output.decision === "skip") {
-    await setStage(deps.db, article.id, "triage_rejected", triage.output.reason.slice(0, 200));
-    return { kind: "triage_rejected", stageCosts };
+    const failure_reason = triage.output.reason.slice(0, 200);
+    const failure_code = mapTriageReason(triage.output.reason);
+    await setStage(deps.db, article.id, "triage_rejected", failure_reason);
+    deps.runLog?.logEvent({
+      event: "triage_rejected",
+      article_id: article.id,
+      failure_code,
+      failure_reason,
+    });
+    return { kind: "triage_rejected", stageCosts, failure_code, failure_reason };
   }
 
   // ---- Extract (chunk + merge) ----
@@ -286,8 +342,24 @@ async function processOne(
   });
   if (!det.pass) {
     const reason = `deterministic:${det.failures.map((f) => f.kind).join(",")}`;
-    await setStage(deps.db, article.id, "factcheck_failed", reason.slice(0, 200));
-    return { kind: "factcheck_failed", stageCosts };
+    const failure_reason = reason.slice(0, 200);
+    // Map directly off `det.failures[].kind` (typed union) before the reason
+    // string is composed — avoids re-parsing the joined string.
+    const codes = det.failures.map((f) => mapDeterministicKind(f.kind));
+    // Dedup while preserving order: the first kind is the "primary" code
+    // for `article_done`; the full list goes on the dedicated event.
+    const failure_codes = Array.from(new Set(codes));
+    const failure_code = failure_codes[0]!;
+    await setStage(deps.db, article.id, "factcheck_failed", failure_reason);
+    deps.runLog?.logEvent({
+      event: "factcheck_failed",
+      article_id: article.id,
+      stage_reached: "factcheck_deterministic",
+      failure_code,
+      failure_codes,
+      failure_reason,
+    });
+    return { kind: "factcheck_failed", stageCosts, failure_code, failure_codes, failure_reason };
   }
 
   // ---- Factcheck: LLM + reconcile ----
@@ -320,8 +392,18 @@ async function processOne(
   };
 
   if (decision.kind === "fail") {
-    await setStage(deps.db, article.id, "factcheck_failed", decision.failureReason.slice(0, 200));
-    return { kind: "factcheck_failed", stageCosts };
+    const failure_reason = decision.failureReason.slice(0, 200);
+    const failure_code = mapReconcileReason(decision.failureReason);
+    await setStage(deps.db, article.id, "factcheck_failed", failure_reason);
+    deps.runLog?.logEvent({
+      event: "factcheck_failed",
+      article_id: article.id,
+      stage_reached: "factcheck_reconcile",
+      failure_code,
+      failure_reason,
+      raw_model_output: fc.raw,
+    });
+    return { kind: "factcheck_failed", stageCosts, failure_code, failure_reason };
   }
 
   const finalExtraction = decision.extraction;
