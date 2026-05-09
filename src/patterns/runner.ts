@@ -40,7 +40,15 @@ export interface RunnerDeps {
 
 export interface PatternRunResult<TOutput> {
   output: TOutput;
+  /** Token usage. `input_tokens` and `output_tokens` are summed across the
+   *  initial call and the retry call (when one occurred), so they reflect
+   *  what we actually paid for. `model` is the final response's model id. */
   usage: { input_tokens: number; output_tokens: number; model: string };
+  /** USD cost summed across the initial call and the retry call. Computed
+   *  from `usage` via `ratesForModel`. */
+  cost_usd: number;
+  /** Wall-clock ms summed across the initial call and the retry call. */
+  duration_ms: number;
   retries: 0 | 1;
   raw: string;
 }
@@ -113,11 +121,22 @@ export async function runPattern<I, O>(
     maxTokens: deps.maxOutputTokens ?? 4096,
     temperature: 0,
   });
-  logModelCall(deps.runLog, firstResp, rendered, firstMessages, Date.now() - t0);
+  const firstDuration = Date.now() - t0;
+  const firstCost = computeCost(
+    firstResp.usage.input_tokens,
+    firstResp.usage.output_tokens,
+    ratesForModel(firstResp.model),
+  );
+  logModelCall(deps.runLog, firstResp, rendered, firstMessages, firstDuration);
 
   const firstParsed = tryParseJson(firstResp.text);
   if (firstParsed.ok) {
-    return finalize(def, schema, firstResp, firstParsed.value, 0);
+    return finalize(def, schema, firstResp, firstParsed.value, 0, {
+      input_tokens: firstResp.usage.input_tokens,
+      output_tokens: firstResp.usage.output_tokens,
+      cost_usd: firstCost,
+      duration_ms: firstDuration,
+    });
   }
 
   const retryMessages = [
@@ -136,13 +155,31 @@ export async function runPattern<I, O>(
     maxTokens: deps.maxOutputTokens ?? 4096,
     temperature: 0,
   });
-  logModelCall(deps.runLog, retryResp, rendered, retryMessages, Date.now() - t1);
+  const retryDuration = Date.now() - t1;
+  const retryCost = computeCost(
+    retryResp.usage.input_tokens,
+    retryResp.usage.output_tokens,
+    ratesForModel(retryResp.model),
+  );
+  logModelCall(deps.runLog, retryResp, rendered, retryMessages, retryDuration);
 
   const retryParsed = tryParseJson(retryResp.text);
   if (!retryParsed.ok) {
     throw new PatternMalformedJsonError(def.name, retryResp.text, retryParsed.error);
   }
-  return finalize(def, schema, retryResp, retryParsed.value, 1);
+  return finalize(def, schema, retryResp, retryParsed.value, 1, {
+    input_tokens: firstResp.usage.input_tokens + retryResp.usage.input_tokens,
+    output_tokens: firstResp.usage.output_tokens + retryResp.usage.output_tokens,
+    cost_usd: firstCost + retryCost,
+    duration_ms: firstDuration + retryDuration,
+  });
+}
+
+interface CallTotals {
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  duration_ms: number;
 }
 
 function logModelCall(
@@ -177,6 +214,7 @@ function finalize<I, O>(
   resp: { text: string; usage: { input_tokens: number; output_tokens: number }; model: string },
   value: JsonValue,
   retries: 0 | 1,
+  totals: CallTotals,
 ): PatternRunResult<O> {
   const errors = validate(schema, value);
   if (errors.length > 0) {
@@ -184,7 +222,13 @@ function finalize<I, O>(
   }
   return {
     output: value as unknown as O,
-    usage: { ...resp.usage, model: resp.model },
+    usage: {
+      input_tokens: totals.input_tokens,
+      output_tokens: totals.output_tokens,
+      model: resp.model,
+    },
+    cost_usd: totals.cost_usd,
+    duration_ms: totals.duration_ms,
     retries,
     raw: resp.text,
   };

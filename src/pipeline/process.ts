@@ -17,7 +17,7 @@ import type { DiscordClient } from "../clients/discord.ts";
 
 import { loadEntities, flattenAliases } from "../entities/load.ts";
 
-import { runPattern } from "../patterns/runner.ts";
+import { runPattern, type PatternRunResult } from "../patterns/runner.ts";
 import { TRIAGE_PATTERN, EXTRACT_PATTERN, FACTCHECK_PATTERN } from "../patterns/registry.ts";
 import type {
   ExtractionOutput,
@@ -67,14 +67,52 @@ export interface ProcessDeps {
   runLog?: RunLogger;
 }
 
+export interface StageCosts {
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
 export interface ProcessSummary {
   processed: number;
   triage_rejected: number;
   extracted: number;
   factcheck_failed: number;
   published: number;
+  /** Backward-compat: equals `costs.total.calls`. Kept one release for any
+   *  agent dashboards still consuming the flat field. */
+  // TODO: remove after agent dashboards consume costs.total.calls
   model_calls: number;
+  costs: { triage: StageCosts; extract: StageCosts; factcheck: StageCosts; total: StageCosts };
 }
+
+function emptyStageCosts(): StageCosts {
+  return { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0 };
+}
+
+function accumulate(bucket: StageCosts, r: PatternRunResult<unknown>): void {
+  bucket.calls += 1;
+  bucket.input_tokens += r.usage.input_tokens;
+  bucket.output_tokens += r.usage.output_tokens;
+  bucket.cost_usd += r.cost_usd;
+}
+
+function addStage(into: StageCosts, from: StageCosts): void {
+  into.calls += from.calls;
+  into.input_tokens += from.input_tokens;
+  into.output_tokens += from.output_tokens;
+  into.cost_usd += from.cost_usd;
+}
+
+interface StageMetric {
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  duration_ms: number;
+}
+
+type TerminalState = "published" | "triage_rejected" | "factcheck_failed" | "error";
 
 export async function processPendingArticles(deps: ProcessDeps): Promise<ProcessSummary> {
   const env = deps.env ?? process.env;
@@ -96,22 +134,36 @@ export async function processPendingArticles(deps: ProcessDeps): Promise<Process
     factcheck_failed: 0,
     published: 0,
     model_calls: 0,
+    costs: {
+      triage: emptyStageCosts(),
+      extract: emptyStageCosts(),
+      factcheck: emptyStageCosts(),
+      total: emptyStageCosts(),
+    },
   };
 
   for (const article of pending) {
     summary.processed++;
+    const articleStart = Date.now();
+    const stages: { triage?: StageMetric; extract?: StageMetric; factcheck?: StageMetric } = {};
+    let terminal: TerminalState = "error";
     try {
-      const result = await processOne(article, deps, env, entities);
-      summary.model_calls += result.modelCalls;
+      const result = await processOne(article, deps, env, entities, stages);
+      addStage(summary.costs.triage, result.stageCosts.triage);
+      addStage(summary.costs.extract, result.stageCosts.extract);
+      addStage(summary.costs.factcheck, result.stageCosts.factcheck);
       switch (result.kind) {
         case "triage_rejected":
           summary.triage_rejected++;
+          terminal = "triage_rejected";
           break;
         case "factcheck_failed":
           summary.factcheck_failed++;
+          terminal = "factcheck_failed";
           break;
         case "published":
           summary.published++;
+          terminal = "published";
           break;
       }
     } catch (err) {
@@ -120,15 +172,31 @@ export async function processPendingArticles(deps: ProcessDeps): Promise<Process
       const msg = err instanceof Error ? err.message : String(err);
       await setStage(deps.db, article.id, "factcheck_failed", `unhandled:${msg.slice(0, 200)}`);
       summary.factcheck_failed++;
+      terminal = "error";
     }
+    deps.runLog?.logEvent({
+      event: "article_done",
+      article_id: article.id,
+      article_url: article.url,
+      source_id: article.source_id,
+      terminal_state: terminal,
+      duration_ms: Date.now() - articleStart,
+      stages,
+    });
   }
+
+  // total = sum of stages. Computed at the end so callers see a consistent view.
+  addStage(summary.costs.total, summary.costs.triage);
+  addStage(summary.costs.total, summary.costs.extract);
+  addStage(summary.costs.total, summary.costs.factcheck);
+  summary.model_calls = summary.costs.total.calls;
 
   return summary;
 }
 
 interface ProcessOneResult {
   kind: "triage_rejected" | "factcheck_failed" | "published";
-  modelCalls: number;
+  stageCosts: { triage: StageCosts; extract: StageCosts; factcheck: StageCosts };
 }
 
 async function processOne(
@@ -136,8 +204,17 @@ async function processOne(
   deps: ProcessDeps,
   env: NodeJS.ProcessEnv,
   entities: Awaited<ReturnType<typeof loadEntities>>,
+  stageMetrics: { triage?: StageMetric; extract?: StageMetric; factcheck?: StageMetric },
 ): Promise<ProcessOneResult> {
-  let modelCalls = 0;
+  const stageCosts = {
+    triage: emptyStageCosts(),
+    extract: emptyStageCosts(),
+    factcheck: emptyStageCosts(),
+  };
+  // ProcessSummary.costs (StageCosts) doesn't carry duration; extract may run
+  // many calls (one per chunk, possibly twice via reconcile), so track its
+  // total duration locally to populate stageMetrics.extract.duration_ms.
+  let extractDurationMs = 0;
   const anthropicDeps = { anthropic: deps.anthropic, env, runLog: deps.runLog };
 
   // ---- Triage ----
@@ -153,11 +230,17 @@ async function processOne(
     },
     anthropicDeps,
   );
-  modelCalls += 1;
+  accumulate(stageCosts.triage, triage);
+  stageMetrics.triage = {
+    cost_usd: triage.cost_usd,
+    input_tokens: triage.usage.input_tokens,
+    output_tokens: triage.usage.output_tokens,
+    duration_ms: triage.duration_ms,
+  };
 
   if (triage.output.decision === "skip") {
     await setStage(deps.db, article.id, "triage_rejected", triage.output.reason.slice(0, 200));
-    return { kind: "triage_rejected", modelCalls };
+    return { kind: "triage_rejected", stageCosts };
   }
 
   // ---- Extract (chunk + merge) ----
@@ -180,12 +263,19 @@ async function processOne(
         },
         anthropicDeps,
       );
-      modelCalls += 1;
+      accumulate(stageCosts.extract, r);
+      extractDurationMs += r.duration_ms;
       perChunk.push(r.output as ExtractionOutput);
     }
     return mergeExtractions(perChunk);
   };
   const extraction = await runExtract();
+  stageMetrics.extract = {
+    cost_usd: stageCosts.extract.cost_usd,
+    input_tokens: stageCosts.extract.input_tokens,
+    output_tokens: stageCosts.extract.output_tokens,
+    duration_ms: extractDurationMs,
+  };
 
   // ---- Factcheck: deterministic gate ----
   const det = await runDeterministic({
@@ -197,7 +287,7 @@ async function processOne(
   if (!det.pass) {
     const reason = `deterministic:${det.failures.map((f) => f.kind).join(",")}`;
     await setStage(deps.db, article.id, "factcheck_failed", reason.slice(0, 200));
-    return { kind: "factcheck_failed", modelCalls };
+    return { kind: "factcheck_failed", stageCosts };
   }
 
   // ---- Factcheck: LLM + reconcile ----
@@ -206,7 +296,7 @@ async function processOne(
     { raw_text: article.raw_text, extraction_json: JSON.stringify(extraction) },
     anthropicDeps,
   );
-  modelCalls += 1;
+  accumulate(stageCosts.factcheck, fc);
 
   const decision = await reconcile({
     extraction1: extraction,
@@ -214,9 +304,24 @@ async function processOne(
     reRunExtract: runExtract,
   });
 
+  // Reconcile may have triggered another runExtract pass; stageCosts.extract is
+  // already updated via accumulate(). Snapshot the final stageMetrics values.
+  stageMetrics.extract = {
+    cost_usd: stageCosts.extract.cost_usd,
+    input_tokens: stageCosts.extract.input_tokens,
+    output_tokens: stageCosts.extract.output_tokens,
+    duration_ms: extractDurationMs,
+  };
+  stageMetrics.factcheck = {
+    cost_usd: fc.cost_usd,
+    input_tokens: fc.usage.input_tokens,
+    output_tokens: fc.usage.output_tokens,
+    duration_ms: fc.duration_ms,
+  };
+
   if (decision.kind === "fail") {
     await setStage(deps.db, article.id, "factcheck_failed", decision.failureReason.slice(0, 200));
-    return { kind: "factcheck_failed", modelCalls };
+    return { kind: "factcheck_failed", stageCosts };
   }
 
   const finalExtraction = decision.extraction;
@@ -257,7 +362,7 @@ async function processOne(
     { dbClient: deps.db, discord: deps.discord },
   );
 
-  return { kind: "published", modelCalls };
+  return { kind: "published", stageCosts };
 }
 
 async function resolveIncidentId(
