@@ -6,6 +6,9 @@ on:
     - cron: "*/30 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: ingest
   cancel-in-progress: false
@@ -36,3 +39,25 @@ jobs:
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+
+      - name: Generate run summary
+        if: always()
+        run: npx tsx scripts/gen_run_summary.ts --days=7 > logs/runs/summary.md
+
+      - name: Commit run logs and summary
+        if: always()
+        # Concurrency keys are per-workflow group, so a different workflow
+        # (process, investigate) can still race us at git-level — pull --rebase
+        # absorbs that race. [skip ci] prevents the auto-commit from
+        # re-triggering any CI workflow on push.
+        run: |
+          if [[ -n "$(git status --porcelain logs/runs/)" ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add logs/runs/
+            git commit -m "ingest: run ${{ github.run_id }} [skip ci]"
+            git pull --rebase origin main || true
+            git push
+          else
+            echo "No run logs to commit."
+          fi

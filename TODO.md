@@ -63,13 +63,18 @@ are the answer, not Discord export.
       (follow-up; current keyword matcher in `mapTriageReason` falls back
       to `triage_unhandled` for unrecognized strings).
 
-### 5. GitHub Actions log capture
-- [ ] After each scheduled run, the workflow writes
-      `logs/runs/{date}/{stage}-summary.md` (one redacted file per run) and
-      commits via the same auto-commit pattern `investigate.yml` already
-      uses for `logs/investigations/`.
+### 5. GitHub Actions log capture — shipped
+- [x] After each scheduled run, the workflow regenerates a rolling 7-day
+      `logs/runs/summary.md` via `scripts/gen_run_summary.ts` and commits
+      both the per-run NDJSON under `logs/runs/{date}/` and the refreshed
+      `INDEX.ndjson` + `summary.md` via the same auto-commit pattern
+      `investigate.yml` uses for `logs/investigations/`. `git pull --rebase`
+      before push handles inter-workflow races (concurrency keys are
+      per-workflow group, not global).
 - [ ] Full NDJSON uploaded as a workflow artifact (cheap belt + suspenders;
-      retained per repo's default artifact lifetime).
+      retained per repo's default artifact lifetime). _Skipped — the
+      committed NDJSON is the durable record; artifacts would be redundant
+      and expire after 90 days. Reopen if commit-to-git ever gets reverted._
 
 ## Future direction (desktop MCP)
 
