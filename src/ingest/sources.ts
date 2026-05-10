@@ -14,15 +14,14 @@ export const SOURCES: readonly SourceFeed[] = [
   { id: "therecord",        name: "The Record",          url: "https://therecord.media/feed",                            tier: "primary"   },
   { id: "riskybiz",         name: "Risky Biz News",      url: "https://news.risky.biz/feed/",                            tier: "primary"   },
   { id: "bleepingcomputer", name: "BleepingComputer",    url: "https://www.bleepingcomputer.com/feed/",                  tier: "secondary" },
-  { id: "darkreading",      name: "Dark Reading",        url: "https://www.darkreading.com/rss_simple.asp",              tier: "secondary" },
+  { id: "darkreading",      name: "Dark Reading",        url: "https://www.darkreading.com/rss.xml",                     tier: "secondary" },
   { id: "securityweek",     name: "SecurityWeek",        url: "https://www.securityweek.com/feed/",                      tier: "secondary" },
   { id: "cyberscoop",       name: "CyberScoop",          url: "https://cyberscoop.com/feed/",                            tier: "secondary" },
-  { id: "arstechnica_sec",  name: "Ars Technica – Security", url: "https://feeds.arstechnica.com/arstechnica/security", tier: "secondary" },
-  { id: "csoonline",        name: "CSO Online",          url: "https://www.csoonline.com/index.rss",                     tier: "secondary" },
+  { id: "arstechnica_sec",  name: "Ars Technica – Security", url: "https://arstechnica.com/tag/security/feed/",          tier: "secondary" },
+  { id: "csoonline",        name: "CSO Online",          url: "https://www.csoonline.com/feed/",                         tier: "secondary" },
   { id: "thehackernews",    name: "The Hacker News",     url: "https://feeds.feedburner.com/TheHackersNews",             tier: "aggregator" },
   { id: "schneier",         name: "Schneier on Security",url: "https://www.schneier.com/feed/",                          tier: "primary"   },
   { id: "google_security",  name: "Google Security Blog",url: "https://security.googleblog.com/feeds/posts/default",     tier: "vendor"    },
-  { id: "github_advisories",name: "GitHub Security Advisories", url: "https://github.com/advisories.atom",               tier: "advisory"  },
 ] as const;
 
 /** Best-effort lookup: match an article URL's hostname back to a configured source feed. */
