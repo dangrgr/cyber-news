@@ -1,0 +1,4 @@
+# Force TypeScript files to diff as text. src/factcheck/reconcile.ts uses
+# embedded NUL bytes as a null-sentinel in normalizeScalar(), which trips
+# git's binary autodetection and breaks diff/blame/PR review.
+*.ts diff
