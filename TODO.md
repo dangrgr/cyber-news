@@ -76,22 +76,31 @@ are the answer, not Discord export.
       committed NDJSON is the durable record; artifacts would be redundant
       and expire after 90 days. Reopen if commit-to-git ever gets reverted._
 
+### 6. MCP run-log query tools — shipped
+- [x] `scripts/mcp_run_log.ts` — local stdio MCP server with six
+      `runlog_*` tools (list_runs, get_run, query_failures,
+      get_article_trace, recent_health, compare_runs). Pure-function reads
+      over the committed NDJSON; raw_output truncated to 2 KB on tool
+      output with a `<file>:<line>` pointer to the full text.
+- [x] `.mcp.json` at repo root auto-registers the server when Claude Code
+      starts cwd'd in `cyber-news/`. Sessions without a local clone fall
+      back to `gh api` over the same committed NDJSON.
+- [x] Repo root resolution: `CYBER_NEWS_ROOT` env > `--root` CLI > cwd.
+
 ## Future direction (desktop MCP)
 
 A future desktop Claude session could add MCP tools for:
 
 1. **Read-only Turso queries** — `articles`, `incidents`, `investigations`
    without hand-writing SQL.
-2. **`logs/runs/` tail / grep** — read NDJSON from item 1 of this TODO
-   without rerunning.
-3. **Discord export on-demand** (e.g. wrapping Tyrrrz/DiscordChatExporter)
+2. **Discord export on-demand** (e.g. wrapping Tyrrrz/DiscordChatExporter)
    — fetch the last N hours of `#cyber-news` / `#cyber-investigations`.
    Complements run logs (which capture *non-published* failure paths);
    doesn't replace them. Tradeoff vs a scheduled cron: no committed
    historical archive unless the desktop session opts to commit pulls —
    acceptable for personal-project scale.
 
-All three left unspecced — design with full context in a future session.
+Both left unspecced — design with full context in a future session.
 
 ## Conventions
 
