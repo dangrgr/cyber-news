@@ -173,10 +173,102 @@ describe("reconcile decisions", () => {
 
   it("summary uses fuzzy agreement, not exact equality", async () => {
     const e1 = extraction({ summary: "ShinyHunters claims a Cisco breach with 4.2M records." });
-    // Close paraphrase — should still be ≥85% similar.
+    // Close paraphrase — should still be ≥70% similar.
     const e2 = extraction({ summary: "ShinyHunters claims a Cisco breach with 4.2M records exfiltrated." });
     const f = factcheck([
       { field: "summary", verdict: "OVERREACH", article_evidence: null, detail: "..." },
+    ]);
+    const decision = await reconcile({
+      extraction1: e1,
+      factcheck1: f,
+      reRunExtract: async () => e2,
+    });
+    assert.equal(decision.kind, "publish");
+  });
+
+  // Regression: titleRatio is LCS-based and was tuned for short-title dedup. Two
+  // LLM extracts that summarize the same article in different word order
+  // routinely score 75-83. The two cases below were observed in logs/runs/
+  // 2026-05-10/ as factcheck_reconcile_disagree failures with no real semantic
+  // disagreement — both should publish with the lowered threshold.
+  it("summary publishes for paraphrased equivalents — observed Mac-malware case (run 900bf7f2)", async () => {
+    const e1 = extraction({
+      summary:
+        "Attackers are conducting a malvertising campaign that abuses Google Ads and Claude.ai shared chats to distribute macOS malware. Users searching for 'Claude mac download' encounter sponsored results pointing to claude.ai that contain malicious installation instructions. The campaign was identified by Berk Albayrak, a security engineer at Trendyol Group. Two variants of the attack were found using different infrastructure; one variant checks for Russian or CIS-region keyboard configurations before executing, while the other skips profiling and directly harvests browser credentials, cookies, and macOS Keychain contents, exfiltrating them to attacker servers. The malware is identified as a variant of MacSync macOS infostealer.",
+    });
+    const e2 = extraction({
+      summary:
+        "Attackers are conducting a malvertising campaign that abuses Google Ads and Claude.ai shared chats to distribute macOS malware. Users searching for 'Claude mac download' encounter sponsored results pointing to claude.ai that contain malicious installation instructions. The campaign was identified by Berk Albayrak, a security engineer at Trendyol Group. BleepingComputer identified a second variant using separate infrastructure. The malware, identified as a variant of MacSync infostealer, harvests browser credentials, cookies, and macOS Keychain contents. One variant includes victim profiling that checks for Russian or CIS-region keyboard configurations before payload delivery.",
+    });
+    const f = factcheck([
+      { field: "summary", verdict: "OVERREACH", article_evidence: null, detail: "..." },
+    ]);
+    const decision = await reconcile({
+      extraction1: e1,
+      factcheck1: f,
+      reRunExtract: async () => e2,
+    });
+    assert.equal(decision.kind, "publish");
+  });
+
+  it("summary publishes for paraphrased equivalents — observed Crimenetwork case (run 47fe4c62)", async () => {
+    const e1 = extraction({
+      summary:
+        "German authorities shut down a rebooted version of the Crimenetwork cybercrime marketplace that had generated at least €3.6 million in revenue and arrested its 35-year-old administrator in Mallorca, Spain. The new version emerged within days of the original platform's dismantling in late 2024 and had accumulated 22,000 users and over 100 vendors before being seized.",
+    });
+    const e2 = extraction({
+      summary:
+        "German authorities shut down a rebooted version of the Crimenetwork cybercrime marketplace that had generated at least €3.6 million in revenue and arrested its 35-year-old administrator. The new version, which emerged days after the original platform's dismantling in late 2024, had amassed 22,000 users and over 100 vendors before being seized. The arrested operator faces charges under German criminal law and narcotics legislation.",
+    });
+    const f = factcheck([
+      { field: "summary", verdict: "OVERREACH", article_evidence: null, detail: "..." },
+    ]);
+    const decision = await reconcile({
+      extraction1: e1,
+      factcheck1: f,
+      reRunExtract: async () => e2,
+    });
+    assert.equal(decision.kind, "publish");
+  });
+
+  it("summary still fails when extractions genuinely contradict", async () => {
+    // Opposite-meaning summaries about the same incident. titleRatio should be
+    // well under 70 — guards against the threshold being lowered too far.
+    const e1 = extraction({
+      summary: "Cisco confirmed it was breached and 4.2 million customer records were stolen.",
+    });
+    const e2 = extraction({
+      summary: "Cisco denied any breach occurred and called the ShinyHunters claims fabricated.",
+    });
+    const f = factcheck([
+      { field: "summary", verdict: "OVERREACH", article_evidence: null, detail: "..." },
+    ]);
+    const decision = await reconcile({
+      extraction1: e1,
+      factcheck1: f,
+      reRunExtract: async () => e2,
+    });
+    assert.equal(decision.kind, "fail");
+  });
+
+  // Regression: ttps are free-text labels generated by the model, with no
+  // controlled vocabulary. Two stochastic extracts routinely produce
+  // semantically-overlapping but lexically-distinct sets ("Money laundering"
+  // vs "Infrastructure administration" — both supported by an article about a
+  // criminal marketplace). Strict set equality on those will keep blocking
+  // legitimate publishes. Factcheck's own per-field UNSUPPORTED check already
+  // guards against ttps that aren't in the article.
+  it("disagreeing ttps no longer block publish when other flagged fields agree", async () => {
+    const e1 = extraction({
+      confidence: "confirmed",
+      ttps: ["Phishing", "Credential theft", "Money laundering"],
+    });
+    const e2 = extraction({
+      confidence: "confirmed",
+      ttps: ["Phishing", "Credential theft", "Infrastructure administration"],
+    });
+    const f = factcheck([
+      { field: "ttps", verdict: "OVERREACH", article_evidence: null, detail: "..." },
     ]);
     const decision = await reconcile({
       extraction1: e1,
