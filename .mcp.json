@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cyber-news-runlog": {
+      "command": "npx",
+      "args": ["tsx", "scripts/mcp_run_log.ts", "--root", "."]
+    }
+  }
+}
