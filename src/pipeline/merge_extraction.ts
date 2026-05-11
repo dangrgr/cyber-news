@@ -56,8 +56,8 @@ function firstNonNull<T>(xs: (T | null)[]): T | null {
   return null;
 }
 
-function firstNonEmpty(xs: string[]): string | null {
-  for (const x of xs) if (x.trim().length > 0) return x;
+function firstNonEmpty(xs: (string | null)[]): string | null {
+  for (const x of xs) if (x !== null && x.trim().length > 0) return x;
   return null;
 }
 

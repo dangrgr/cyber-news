@@ -323,7 +323,9 @@ async function processOne(
       extractDurationMs += r.duration_ms;
       perChunk.push(r.output as ExtractionOutput);
     }
-    return mergeExtractions(perChunk);
+    const merged = mergeExtractions(perChunk);
+    if (!merged.title) merged.title = article.title;
+    return merged;
   };
   const extraction = await runExtract();
   stageMetrics.extract = {

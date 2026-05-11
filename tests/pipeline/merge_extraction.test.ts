@@ -115,6 +115,23 @@ describe("mergeExtractions: title/summary prefer chunk 0", () => {
   });
 });
 
+describe("mergeExtractions: null title handling", () => {
+  it("merges chunks where all titles are null → result.title is null", () => {
+    const c0 = base({ title: null as unknown as string });
+    const c1 = base({ title: null as unknown as string });
+    const m = mergeExtractions([c0, c1]);
+    assert.equal(m.title, null);
+  });
+
+  it("prefers first non-null/non-empty title across chunks", () => {
+    const c0 = base({ title: null as unknown as string });
+    const c1 = base({ title: "Real Title" });
+    const c2 = base({ title: null as unknown as string });
+    const m = mergeExtractions([c0, c1, c2]);
+    assert.equal(m.title, "Real Title");
+  });
+});
+
 describe("mergeExtractions: primary_source mode with chunk-0 tie break", () => {
   it("picks the majority", () => {
     const c0 = base({ primary_source: "aggregated" });
