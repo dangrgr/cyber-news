@@ -22,9 +22,10 @@ export interface DeterministicInputs {
   publishedAt: string; // ISO 8601
   /** CVE existence check: returns true if NVD knows this CVE id. */
   cveExists: (cveId: string) => Promise<boolean>;
-  /** Skip the cveExists check for regex-passing CVEs on articles within this many
-   *  days of now. Mitigates NVD ingestion lag (days to weeks) for fresh CVEs.
-   *  Default: 14. */
+  /** Skip the cveExists check for regex-passing CVEs on articles published
+   *  fewer than this many days ago. Mitigates NVD ingestion lag (days to
+   *  weeks) for fresh CVEs. Future-dated articles are NOT granted grace
+   *  (a bad feed timestamp would otherwise bypass the NVD gate). Default: 14. */
   cveGraceDays?: number;
   /** Injectable clock for the CVE grace check. Defaults to () => new Date(). */
   now?: () => Date;
@@ -63,7 +64,7 @@ async function checkCves(input: DeterministicInputs): Promise<DeterministicFailu
   const articleAgeDays = Number.isFinite(pubMs)
     ? (now.getTime() - pubMs) / 86_400_000
     : Number.POSITIVE_INFINITY;
-  const withinGrace = articleAgeDays < graceDays;
+  const withinGrace = articleAgeDays >= 0 && articleAgeDays < graceDays;
 
   for (const cve of input.extraction.cves) {
     const normalized = cve.toUpperCase().trim();

@@ -208,6 +208,19 @@ describe("deterministic: CVE grace period", () => {
     assert.equal(r.pass, false);
     assert.equal(called, true);
   });
+
+  it("does NOT grant grace to future-dated articles (defense against bad feed timestamps)", async () => {
+    let called = false;
+    const r = await runDeterministic({
+      extraction: baseExtraction({ cves: ["CVE-2026-32290"] }),
+      rawText: "CVE-2026-32290 was discovered.",
+      publishedAt: "2026-06-10T00:00:00Z", // 31 days IN THE FUTURE relative to now
+      cveExists: async () => { called = true; return false; },
+      now,
+    });
+    assert.equal(called, true, "cveExists must still be called on future-dated articles");
+    assert.equal(r.pass, false);
+  });
 });
 
 describe("deterministic: claim-language alignment", () => {
