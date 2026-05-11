@@ -151,6 +151,78 @@ describe("deterministic: entity-in-article", () => {
   });
 });
 
+describe("deterministic: CVE grace period", () => {
+  const now = () => new Date("2026-05-10T00:00:00Z");
+
+  it("passes a regex-valid CVE on a recent article without calling cveExists (grace period)", async () => {
+    let called = false;
+    const r = await runDeterministic({
+      extraction: baseExtraction({ cves: ["CVE-2026-32290"] }),
+      rawText: "CVE-2026-32290 was discovered.",
+      publishedAt: "2026-05-08T00:00:00Z", // 2 days before now
+      cveExists: async () => { called = true; return false; },
+      now,
+    });
+    assert.equal(r.pass, true);
+    assert.equal(called, false);
+  });
+
+  it("still calls cveExists for old articles outside the grace window", async () => {
+    let called = false;
+    const r = await runDeterministic({
+      extraction: baseExtraction({ cves: ["CVE-2026-32290"] }),
+      rawText: "CVE-2026-32290 was discovered.",
+      publishedAt: "2026-04-10T00:00:00Z", // 30 days before now
+      cveExists: async () => { called = true; return false; },
+      now,
+    });
+    assert.equal(r.pass, false);
+    assert.equal(called, true);
+    assert.ok(r.failures.some((f) => f.kind === "invalid_cve"));
+  });
+
+  it("malformed CVE on a recent article still fails (regex precedes grace)", async () => {
+    let called = false;
+    const r = await runDeterministic({
+      extraction: baseExtraction({ cves: ["CVE-BAD"] }),
+      rawText: "CVE-BAD in the article.",
+      publishedAt: "2026-05-08T00:00:00Z", // 2 days before now, within grace
+      cveExists: async () => { called = true; return true; },
+      now,
+    });
+    assert.equal(r.pass, false);
+    assert.equal(called, false);
+    assert.ok(r.failures.some((f) => f.kind === "invalid_cve"));
+  });
+
+  it("respects custom cveGraceDays=0 (no grace)", async () => {
+    let called = false;
+    const r = await runDeterministic({
+      extraction: baseExtraction({ cves: ["CVE-2026-32290"] }),
+      rawText: "CVE-2026-32290 was discovered.",
+      publishedAt: "2026-05-10T00:00:00Z", // same as now, articleAgeDays=0
+      cveExists: async () => { called = true; return false; },
+      now,
+      cveGraceDays: 0,
+    });
+    assert.equal(r.pass, false);
+    assert.equal(called, true);
+  });
+
+  it("does NOT grant grace to future-dated articles (defense against bad feed timestamps)", async () => {
+    let called = false;
+    const r = await runDeterministic({
+      extraction: baseExtraction({ cves: ["CVE-2026-32290"] }),
+      rawText: "CVE-2026-32290 was discovered.",
+      publishedAt: "2026-06-10T00:00:00Z", // 31 days IN THE FUTURE relative to now
+      cveExists: async () => { called = true; return false; },
+      now,
+    });
+    assert.equal(called, true, "cveExists must still be called on future-dated articles");
+    assert.equal(r.pass, false);
+  });
+});
+
 describe("deterministic: claim-language alignment", () => {
   it("fails when confidence=confirmed but article uses claim markers near an entity", async () => {
     const r = await runDeterministic({
