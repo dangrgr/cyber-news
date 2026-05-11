@@ -44,7 +44,7 @@ export interface ExtractionImpact {
 }
 
 export interface ExtractionOutput {
-  title: string;
+  title: string | null;
   summary: string;
   victim_orgs_confirmed: string[];
   orgs_mentioned: string[];

@@ -19,7 +19,7 @@
     "primary_source"
   ],
   "properties": {
-    "title": { "type": "string" },
+    "title": { "type": ["string", "null"] },
     "summary": { "type": "string" },
     "victim_orgs_confirmed": { "type": "array", "items": { "type": "string" } },
     "orgs_mentioned": { "type": "array", "items": { "type": "string" } },

@@ -6,7 +6,11 @@
 //     non-null across chunks in order.
 //   * confidence: minimum on the ladder claim < reported < confirmed.
 //     Preserves the PRD invariant "never flatten claims into confirmations."
-//   * title, summary: prefer chunk 0; fall back to first non-empty.
+//   * title: first non-null/non-empty across chunks; else chunk-0 title (may
+//     be null, since the extract pattern allows null per the prompt). The
+//     pipeline (`runExtract` in process.ts) coerces a null/empty merged title
+//     to the RSS article.title before any downstream consumer sees it.
+//   * summary: first non-empty across chunks; else chunk-0 summary.
 //   * primary_source: mode across chunks; tie → chunk 0.
 
 import type { Confidence, ExtractionImpact, ExtractionOutput } from "../patterns/types.ts";
@@ -56,8 +60,8 @@ function firstNonNull<T>(xs: (T | null)[]): T | null {
   return null;
 }
 
-function firstNonEmpty(xs: string[]): string | null {
-  for (const x of xs) if (x.trim().length > 0) return x;
+function firstNonEmpty(xs: (string | null)[]): string | null {
+  for (const x of xs) if (x !== null && x.trim().length > 0) return x;
   return null;
 }
 

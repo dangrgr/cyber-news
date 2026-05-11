@@ -900,3 +900,229 @@ describe("processPendingArticles: failure codes (PR 3)", () => {
     assert.equal(articleDones[0]!.failure_code, "pattern_json_invalid");
   });
 });
+
+describe("processPendingArticles: null title fallback", () => {
+  it("extract returning null title falls back to article.title from RSS", async () => {
+    const artId = await seedArticle(db, {
+      id: "art-null-title",
+      title: "RSS Feed Title From Ingest",
+    });
+
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "process",
+          novel: true,
+          significant: true,
+          duplicate_of: null,
+          reason: "Named victim.",
+        }),
+      extract: () =>
+        JSON.stringify({
+          title: null,
+          summary: "ShinyHunters breached Cisco.",
+          victim_orgs_confirmed: ["Cisco"],
+          orgs_mentioned: [],
+          threat_actors_attributed: ["ShinyHunters"],
+          actors_mentioned: [],
+          cves: [],
+          initial_access_vector: null,
+          ttps: [],
+          impact: {
+            affected_count: null,
+            affected_count_unit: null,
+            data_exfil_size: null,
+            sector: null,
+            geographic_scope: null,
+            service_disruption: null,
+          },
+          incident_date: null,
+          confidence: "reported",
+          claim_markers_observed: [],
+          primary_source: "article_itself",
+        }),
+      factcheck: () => JSON.stringify({ overall: "pass", issues: [] }),
+    });
+
+    const discord = recordingDiscord();
+    const summary = await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord,
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+    });
+
+    assert.equal(summary.published, 1, "should publish despite null extract title");
+    assert.equal(discord.posts.length, 1);
+
+    const row = await db.execute({
+      sql: `SELECT incident_id FROM articles WHERE id = ?`,
+      args: [artId],
+    });
+    const incidentId = String(row.rows[0]!.incident_id);
+
+    const incident = await db.execute({
+      sql: `SELECT title FROM incidents WHERE id = ?`,
+      args: [incidentId],
+    });
+    assert.equal(
+      String(incident.rows[0]!.title),
+      "RSS Feed Title From Ingest",
+      "incident title should fall back to RSS article.title when extract returns null",
+    );
+  });
+
+  it("empty-string extract title also falls back to article.title", async () => {
+    const artId = await seedArticle(db, {
+      id: "art-empty-title",
+      title: "RSS Title For Empty",
+    });
+
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "process",
+          novel: true,
+          significant: true,
+          duplicate_of: null,
+          reason: "Named victim.",
+        }),
+      extract: () =>
+        JSON.stringify({
+          title: "", // empty string, distinct from null
+          summary: "ShinyHunters breached Cisco.",
+          victim_orgs_confirmed: ["Cisco"],
+          orgs_mentioned: [],
+          threat_actors_attributed: ["ShinyHunters"],
+          actors_mentioned: [],
+          cves: [],
+          initial_access_vector: null,
+          ttps: [],
+          impact: {
+            affected_count: null,
+            affected_count_unit: null,
+            data_exfil_size: null,
+            sector: null,
+            geographic_scope: null,
+            service_disruption: null,
+          },
+          incident_date: null,
+          confidence: "reported",
+          claim_markers_observed: [],
+          primary_source: "article_itself",
+        }),
+      factcheck: () => JSON.stringify({ overall: "pass", issues: [] }),
+    });
+
+    const discord = recordingDiscord();
+    const summary = await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord,
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+    });
+
+    assert.equal(summary.published, 1);
+    const row = await db.execute({
+      sql: `SELECT incident_id FROM articles WHERE id = ?`,
+      args: [artId],
+    });
+    const incidentId = String(row.rows[0]!.incident_id);
+    const incident = await db.execute({
+      sql: `SELECT title FROM incidents WHERE id = ?`,
+      args: [incidentId],
+    });
+    assert.equal(String(incident.rows[0]!.title), "RSS Title For Empty");
+  });
+
+  it("reconcile re-run extract also gets the RSS title fallback", async () => {
+    // Regression guard: the reconcile path re-invokes runExtract. Both the
+    // initial pass and the re-run must apply the null-title coercion, or
+    // reconcile will compare null vs article.title and disagree.
+    await seedArticle(db, {
+      id: "art-reconcile-null-title",
+      title: "RSS Title For Reconcile",
+    });
+
+    let extractCalls = 0;
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "process",
+          novel: true,
+          significant: true,
+          duplicate_of: null,
+          reason: "Named victim.",
+        }),
+      extract: () => {
+        extractCalls++;
+        return JSON.stringify({
+          title: null, // both passes return null; coercion must fire twice
+          summary: "ShinyHunters breached Cisco.",
+          victim_orgs_confirmed: ["Cisco"],
+          orgs_mentioned: [],
+          threat_actors_attributed: ["ShinyHunters"],
+          actors_mentioned: [],
+          cves: [],
+          initial_access_vector: null,
+          ttps: [],
+          impact: {
+            affected_count: null,
+            affected_count_unit: null,
+            data_exfil_size: null,
+            sector: null,
+            geographic_scope: null,
+            service_disruption: null,
+          },
+          incident_date: null,
+          confidence: "reported",
+          claim_markers_observed: [],
+          primary_source: "article_itself",
+        });
+      },
+      // Flag summary with OVERREACH to trigger the reconcile re-run path.
+      factcheck: () =>
+        JSON.stringify({
+          overall: "fail",
+          issues: [
+            {
+              field: "summary",
+              verdict: "OVERREACH",
+              article_evidence: null,
+              detail: "force reconcile",
+            },
+          ],
+        }),
+    });
+
+    const discord = recordingDiscord();
+    const summary = await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord,
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+    });
+
+    assert.ok(extractCalls >= 2, `expected reconcile to re-run extract; got ${extractCalls} calls`);
+    assert.equal(summary.published, 1, "reconcile should publish: both passes share the same coerced title");
+    assert.equal(discord.posts.length, 1);
+  });
+});
