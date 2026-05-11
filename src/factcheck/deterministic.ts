@@ -22,6 +22,12 @@ export interface DeterministicInputs {
   publishedAt: string; // ISO 8601
   /** CVE existence check: returns true if NVD knows this CVE id. */
   cveExists: (cveId: string) => Promise<boolean>;
+  /** Skip the cveExists check for regex-passing CVEs on articles within this many
+   *  days of now. Mitigates NVD ingestion lag (days to weeks) for fresh CVEs.
+   *  Default: 14. */
+  cveGraceDays?: number;
+  /** Injectable clock for the CVE grace check. Defaults to () => new Date(). */
+  now?: () => Date;
   /** Similarity threshold (0-100) for entity-in-article. PRD §8.6 calls for 85. */
   entityRatioThreshold?: number;
   /** +/- days window around publishedAt for incident_date sanity. PRD: -90/+7. */
@@ -51,12 +57,21 @@ export async function runDeterministic(input: DeterministicInputs): Promise<Dete
 
 async function checkCves(input: DeterministicInputs): Promise<DeterministicFailure[]> {
   const fails: DeterministicFailure[] = [];
+  const graceDays = input.cveGraceDays ?? 14;
+  const now = (input.now ?? (() => new Date()))();
+  const pubMs = Date.parse(input.publishedAt);
+  const articleAgeDays = Number.isFinite(pubMs)
+    ? (now.getTime() - pubMs) / 86_400_000
+    : Number.POSITIVE_INFINITY;
+  const withinGrace = articleAgeDays < graceDays;
+
   for (const cve of input.extraction.cves) {
     const normalized = cve.toUpperCase().trim();
     if (!/^CVE-\d{4}-\d{4,}$/.test(normalized)) {
       fails.push({ kind: "invalid_cve", cve });
       continue;
     }
+    if (withinGrace) continue;
     const ok = await input.cveExists(normalized);
     if (!ok) fails.push({ kind: "invalid_cve", cve: normalized });
   }
