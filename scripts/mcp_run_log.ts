@@ -97,6 +97,29 @@ export interface CompareRunsArgs {
   run_id_b: string;
 }
 
+export interface DedupHistogramArgs {
+  since?: string;
+  until?: string;
+  days?: number;
+}
+
+export interface DedupHistogramBucket {
+  range: string;
+  count: number;
+  sample_titles: string[];
+}
+
+export interface DedupHistogram {
+  generated_at: string;
+  window_days: number | null;
+  total_decisions: number;
+  duplicate_count: number;
+  unique_count: number;
+  reason_breakdown: Record<string, number>;
+  /** One bucket per 10-point score band. Only buckets with ≥1 event are included. */
+  score_buckets: DedupHistogramBucket[];
+}
+
 // ---- Repo root resolution --------------------------------------------------
 
 export function resolveRoot(
@@ -458,6 +481,121 @@ export async function compareRuns(
   };
 }
 
+// ---- Tool: runlog_dedup_histogram ------------------------------------------
+
+const SAMPLE_TITLE_LIMIT = 3;
+const BUCKET_WIDTH = 10;
+
+function scoreBucketLabel(score: number): string {
+  const lo = Math.floor(score / BUCKET_WIDTH) * BUCKET_WIDTH;
+  const hi = lo + BUCKET_WIDTH - 1;
+  // Cap the upper end of the last bucket at 100.
+  return `${lo}-${Math.min(hi, 100)}`;
+}
+
+export async function dedupHistogram(
+  args: DedupHistogramArgs,
+  opts: { root: string; now?: () => Date },
+): Promise<DedupHistogram> {
+  const now = (opts.now ?? (() => new Date()))();
+  const generated_at = now.toISOString();
+
+  // Resolve time window: prefer explicit since/until, fall back to days.
+  let since: string | undefined = args.since;
+  let until: string | undefined = args.until;
+  let windowDays: number | null = null;
+  if (!since && !until && typeof args.days === "number" && args.days > 0) {
+    windowDays = args.days;
+    since = new Date(now.getTime() - windowDays * DAY_MS).toISOString();
+  }
+
+  const indexPath = path.join(opts.root, "logs", "runs", "INDEX.ndjson");
+  const empty: DedupHistogram = {
+    generated_at,
+    window_days: windowDays,
+    total_decisions: 0,
+    duplicate_count: 0,
+    unique_count: 0,
+    reason_breakdown: {},
+    score_buckets: [],
+  };
+  if (!existsSync(indexPath)) return empty;
+
+  // Collect ingest runs within the window.
+  const rows: IndexRow[] = [];
+  for await (const { row } of readNdjson<IndexRow>(indexPath)) {
+    if (row.stage !== "ingest") continue;
+    if ((since || until) && !inWindow(row.started_at, since, until)) continue;
+    rows.push(row);
+  }
+  if (rows.length === 0) return empty;
+
+  let totalDecisions = 0;
+  let duplicateCount = 0;
+  let uniqueCount = 0;
+  const reasonBreakdown: Record<string, number> = {};
+  // bucket label → { count, sample_titles }
+  const buckets = new Map<string, { count: number; sample_titles: string[] }>();
+
+  for (const idx of rows) {
+    if (!idx.file) continue;
+    const filePath = path.join(opts.root, idx.file);
+    if (!existsSync(filePath)) continue;
+    for await (const { row } of readNdjson<NdjsonEvent>(filePath)) {
+      if (row.event !== "dedup_decision") continue;
+      totalDecisions++;
+
+      const decision = typeof row.decision === "string" ? row.decision : "unknown";
+      if (decision === "duplicate") duplicateCount++;
+      else if (decision === "unique") uniqueCount++;
+
+      const reason = typeof row.reason === "string" ? row.reason : "unknown";
+      reasonBreakdown[reason] = (reasonBreakdown[reason] ?? 0) + 1;
+
+      // Extract the top_match score for histogram bucketing.
+      const topMatch = row.top_match as Record<string, unknown> | null | undefined;
+      const score =
+        topMatch && typeof topMatch.score === "number" && Number.isFinite(topMatch.score)
+          ? topMatch.score
+          : null;
+      if (score === null) continue;
+
+      const label = scoreBucketLabel(score);
+      let bucket = buckets.get(label);
+      if (!bucket) {
+        bucket = { count: 0, sample_titles: [] };
+        buckets.set(label, bucket);
+      }
+      bucket.count++;
+      const candidate = row.candidate as Record<string, unknown> | null | undefined;
+      const title =
+        candidate && typeof candidate.title === "string" ? candidate.title : null;
+      if (title && bucket.sample_titles.length < SAMPLE_TITLE_LIMIT) {
+        bucket.sample_titles.push(title);
+      }
+    }
+  }
+
+  // Sort buckets by lower bound ascending.
+  const scoreBuckets: DedupHistogramBucket[] = Array.from(buckets.entries())
+    .sort((a, b) => {
+      const aLo = parseInt(a[0].split("-")[0]!, 10);
+      const bLo = parseInt(b[0].split("-")[0]!, 10);
+      return aLo - bLo;
+    })
+    .map(([range, { count, sample_titles }]) => ({ range, count, sample_titles }));
+
+  return {
+    generated_at,
+    window_days: windowDays,
+    total_decisions: totalDecisions,
+    duplicate_count: duplicateCount,
+    unique_count: uniqueCount,
+    reason_breakdown: reasonBreakdown,
+    score_buckets: scoreBuckets,
+  };
+}
+
 // ---- Type guards / utility -------------------------------------------------
 
 function asObj(v: unknown): Record<string, unknown> | null {
@@ -588,6 +726,23 @@ const TOOL_DEFINITIONS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "runlog_dedup_histogram",
+    description:
+      "Scan dedup_decision events across ingest runs in a time window and " +
+      "return score-bucket counts plus sample candidate titles. Useful for " +
+      "sizing the dedup threshold and evaluating near-miss rates. " +
+      "Specify a window with days (e.g. days=1) or explicit since/until timestamps.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        since: { type: "string", description: "ISO timestamp; inclusive lower bound" },
+        until: { type: "string", description: "ISO timestamp; inclusive upper bound" },
+        days: { type: "number", description: "Rolling window in days (e.g. 1 for last 24h)" },
+      },
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 export function buildServer(opts: { root: string }): Server {
@@ -670,6 +825,15 @@ async function dispatch(
         {
           run_id_a: requireString(args.run_id_a, "run_id_a"),
           run_id_b: requireString(args.run_id_b, "run_id_b"),
+        },
+        opts,
+      );
+    case "runlog_dedup_histogram":
+      return dedupHistogram(
+        {
+          since: optionalString(args.since, "since"),
+          until: optionalString(args.until, "until"),
+          days: optionalNumber(args.days, "days"),
         },
         opts,
       );

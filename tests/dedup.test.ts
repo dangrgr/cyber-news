@@ -48,6 +48,8 @@ describe("dedup: URL match", () => {
     assert.equal(r.reason, "url_match");
     assert.equal(r.matchedIncidentId, "incident-1");
     assert.equal(r.matchScore, 100);
+    assert.equal(r.topMatchId, null, "url_match carries no near-miss signal");
+    assert.equal(r.topScore, null);
   });
 
   it("treats utm-only differences as the same canonical URL", () => {
@@ -75,6 +77,8 @@ describe("dedup: title fuzzy match", () => {
       r.matchScore !== null && r.matchScore > TITLE_RATIO_THRESHOLD,
       `score ${r.matchScore} should exceed ${TITLE_RATIO_THRESHOLD}`,
     );
+    assert.equal(r.topMatchId, null, "title_match carries no near-miss signal");
+    assert.equal(r.topScore, null);
   });
 
   it("does not flag a different story even with shared entities", () => {
@@ -83,6 +87,26 @@ describe("dedup: title fuzzy match", () => {
     const r = findDuplicate(cand, existing);
     assert.equal(r.isDuplicate, false);
     assert.equal(r.reason, "no_match");
+  });
+
+  it("returns topMatchId/topScore for the best near-miss on a no_match decision", () => {
+    const existing = [asExisting(A_KREBS_SHINY)];
+    const cand = asCandidate(A_DARKREADING_DIFFERENT_STORY);
+    const r = findDuplicate(cand, existing);
+    assert.equal(r.isDuplicate, false);
+    // The different story still scores > 0 against the existing title; the
+    // near-miss signal should be returned even though it's below threshold.
+    if (r.topMatchId !== null) {
+      assert.equal(r.topMatchId, asExisting(A_KREBS_SHINY).id);
+      assert.ok(
+        r.topScore !== null && r.topScore <= TITLE_RATIO_THRESHOLD,
+        `topScore ${r.topScore} should be ≤ ${TITLE_RATIO_THRESHOLD}`,
+      );
+    }
+    // When existing is empty there should be no near-miss signal.
+    const rEmpty = findDuplicate(cand, []);
+    assert.equal(rEmpty.topMatchId, null);
+    assert.equal(rEmpty.topScore, null);
   });
 
   it("flags a small headline reword later the same day as the same story", () => {

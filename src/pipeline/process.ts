@@ -57,7 +57,7 @@ import {
 } from "../turso/articles.ts";
 import { insertIncident, getIncident, addSourceToIncident } from "../turso/incidents.ts";
 
-import { getSourceByCanonicalUrl } from "../ingest/sources.ts";
+import { getSourceByCanonicalUrl, SOURCES } from "../ingest/sources.ts";
 import type { RunLogger } from "../util/run_log.ts";
 
 export interface ProcessDeps {
@@ -457,7 +457,25 @@ async function resolveIncidentId(
   // If ingest already attached this article to an existing incident (fuzzy
   // title match at dedup time), reuse it and bump corroboration.
   if (article.incident_id) {
+    // Fetch before incrementing to capture first_seen_at and pre-bump count.
+    const existingIncident = deps.runLog ? await getIncident(deps.db, article.incident_id) : null;
     await addSourceToIncident(deps.db, article.incident_id, article.url);
+    if (existingIncident && deps.runLog) {
+      const alreadyPresent = existingIncident.source_urls.includes(article.url);
+      const corroborationCountAfter = alreadyPresent
+        ? existingIncident.corroboration_count
+        : existingIncident.source_urls.length + 1;
+      const sourceTier = SOURCES.find((s) => s.id === article.source_id)?.tier ?? "unknown";
+      deps.runLog.logEvent({
+        event: "incident_corroborated",
+        incident_id: article.incident_id,
+        corroborator_article_id: article.id,
+        corroborator_source_id: article.source_id,
+        corroborator_source_tier: sourceTier,
+        time_since_first_publish_ms: Date.now() - Date.parse(existingIncident.first_seen_at),
+        corroboration_count_after: corroborationCountAfter,
+      });
+    }
     return article.incident_id;
   }
 
