@@ -13,12 +13,22 @@ export interface TriageInput {
   nearest_incident_json_or_null: string; // pre-stringified JSON or the literal "null"
 }
 
+export type TriageReasonCode =
+  | "vendor_marketing"
+  | "not_an_incident"
+  | "off_topic"
+  | "speculation"
+  | "low_severity"
+  | "duplicate";
+
 export interface TriageOutput {
   decision: "process" | "skip";
   novel: boolean;
   significant: boolean;
   duplicate_of: string | null;
   reason: string;
+  /** Structured skip reason; null when decision === "process". */
+  reason_code: TriageReasonCode | null;
 }
 
 // ---------- Extraction (PRD §10.2) ----------

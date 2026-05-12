@@ -128,6 +128,7 @@ describe("processPendingArticles: happy path", () => {
           significant: true,
           duplicate_of: null,
           reason: "Named victim and actor.",
+          reason_code: null,
         }),
       extract: () =>
         JSON.stringify({
@@ -200,6 +201,7 @@ describe("processPendingArticles: triage skip", () => {
           significant: false,
           duplicate_of: null,
           reason: "Vendor marketing content.",
+          reason_code: "vendor_marketing",
         }),
       extract: () => {
         extractCalls++;
@@ -249,6 +251,7 @@ describe("processPendingArticles: factcheck fail (deterministic date window)", (
           significant: true,
           duplicate_of: null,
           reason: "valid incident",
+          reason_code: null,
         }),
       extract: () =>
         JSON.stringify({
@@ -316,7 +319,7 @@ describe("processPendingArticles: MAX_PROCESS_BATCH parsing", () => {
     }
     const anthropic = routedAnthropic({
       triage: () =>
-        JSON.stringify({ decision: "skip", novel: false, significant: false, duplicate_of: null, reason: "x" }),
+        JSON.stringify({ decision: "skip", novel: false, significant: false, duplicate_of: null, reason: "x", reason_code: "not_an_incident" }),
       extract: () => "{}",
       factcheck: () => "{}",
     });
@@ -350,6 +353,7 @@ describe("processPendingArticles: DRY_RUN at the discord chokepoint", () => {
           significant: true,
           duplicate_of: null,
           reason: "named victim and actor",
+          reason_code: null,
         }),
       extract: () =>
         JSON.stringify({
@@ -445,6 +449,7 @@ describe("processPendingArticles: mixed batch", () => {
             significant: false,
             duplicate_of: null,
             reason: "skip reason",
+            reason_code: "not_an_incident",
           });
         }
         return JSON.stringify({
@@ -453,6 +458,7 @@ describe("processPendingArticles: mixed batch", () => {
           significant: true,
           duplicate_of: null,
           reason: "process reason",
+          reason_code: null,
         });
       },
       extract: (sys) => {
@@ -521,6 +527,7 @@ describe("processPendingArticles: per-stage cost rollup + article_done events (P
             significant: false,
             duplicate_of: null,
             reason: "skip",
+            reason_code: "not_an_incident",
           });
         }
         return JSON.stringify({
@@ -529,6 +536,7 @@ describe("processPendingArticles: per-stage cost rollup + article_done events (P
           significant: true,
           duplicate_of: null,
           reason: "ok",
+          reason_code: null,
         });
       },
       extract: (sys) => {
@@ -726,6 +734,7 @@ describe("processPendingArticles: failure codes (PR 3)", () => {
           significant: false,
           duplicate_of: null,
           reason: "Vendor marketing content.",
+          reason_code: "vendor_marketing",
         }),
       extract: () => "{}",
       factcheck: () => "{}",
@@ -778,6 +787,7 @@ describe("processPendingArticles: failure codes (PR 3)", () => {
           significant: true,
           duplicate_of: null,
           reason: "valid",
+          reason_code: null,
         }),
       extract: () =>
         JSON.stringify({
@@ -916,6 +926,7 @@ describe("processPendingArticles: null title fallback", () => {
           significant: true,
           duplicate_of: null,
           reason: "Named victim.",
+          reason_code: null,
         }),
       extract: () =>
         JSON.stringify({
@@ -992,6 +1003,7 @@ describe("processPendingArticles: null title fallback", () => {
           significant: true,
           duplicate_of: null,
           reason: "Named victim.",
+          reason_code: null,
         }),
       extract: () =>
         JSON.stringify({
@@ -1065,6 +1077,7 @@ describe("processPendingArticles: null title fallback", () => {
           significant: true,
           duplicate_of: null,
           reason: "Named victim.",
+          reason_code: null,
         }),
       extract: () => {
         extractCalls++;

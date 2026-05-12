@@ -6,11 +6,27 @@ import {
   mapDeterministicKind,
   mapReconcileReason,
   mapTriageReason,
+  mapTriageReasonCode,
 } from "../../src/pipeline/failure_codes.ts";
 import {
   PatternMalformedJsonError,
   PatternSchemaError,
 } from "../../src/patterns/runner.ts";
+
+describe("mapTriageReasonCode", () => {
+  it("maps every enum value to a distinct FailureCode", () => {
+    assert.equal(mapTriageReasonCode("vendor_marketing"), "triage_vendor_marketing");
+    assert.equal(mapTriageReasonCode("not_an_incident"), "triage_not_an_incident");
+    assert.equal(mapTriageReasonCode("off_topic"), "triage_off_topic");
+    assert.equal(mapTriageReasonCode("speculation"), "triage_speculation");
+    assert.equal(mapTriageReasonCode("low_severity"), "triage_low_severity");
+    assert.equal(mapTriageReasonCode("duplicate"), "triage_duplicate");
+  });
+
+  it("falls back to triage_unhandled for null (process decision forwarded by mistake)", () => {
+    assert.equal(mapTriageReasonCode(null), "triage_unhandled");
+  });
+});
 
 describe("mapTriageReason", () => {
   it("maps duplicate phrasing to triage_duplicate", () => {

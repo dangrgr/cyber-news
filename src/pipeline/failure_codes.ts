@@ -4,11 +4,10 @@
 //
 // Three input surfaces with different shapes:
 //
-//   1. Triage skip `reason` — unconstrained LLM string. Keyword-matched here
-//      with a `triage_unhandled` fallback. A follow-up PR may tighten
-//      `patterns/triage/schema.json` with a `reason_code` enum, which would
-//      replace the keyword path; until then, refine the keyword list as
-//      real `triage_unhandled` reasons accumulate in `logs/runs/`.
+//   1. Triage skip `reason_code` — enum field added to patterns/triage/schema.json.
+//      Direct 1:1 map via `mapTriageReasonCode`. `triage_unhandled` is retained as
+//      a defensive fallback for unexpected or null values.
+//      `mapTriageReason` (keyword matcher) is kept for backward compatibility only.
 //   2. Deterministic factcheck `DeterministicFailure["kind"]` — already a
 //      typed union (src/factcheck/deterministic.ts:8-12). 1:1 map.
 //   3. Reconcile `failureReason` — two literal shapes from
@@ -18,6 +17,7 @@
 // site in src/pipeline/process.ts via `failureCodeFromError`.
 
 import type { DeterministicFailure } from "../factcheck/deterministic.ts";
+import type { TriageReasonCode } from "../patterns/types.ts";
 import {
   PatternMalformedJsonError,
   PatternSchemaError,
@@ -28,6 +28,8 @@ export type FailureCode =
   | "triage_off_topic"
   | "triage_duplicate"
   | "triage_vendor_marketing"
+  | "triage_not_an_incident"
+  | "triage_speculation"
   | "triage_unhandled"
   | "factcheck_invalid_cve"
   | "factcheck_date_out_of_window"
@@ -39,6 +41,21 @@ export type FailureCode =
   | "pattern_schema_invalid"
   | "unhandled_exception";
 
+/** Primary mapper: direct enum→FailureCode, no keyword guessing. */
+export function mapTriageReasonCode(reason_code: TriageReasonCode | null): FailureCode {
+  switch (reason_code) {
+    case "vendor_marketing": return "triage_vendor_marketing";
+    case "not_an_incident":  return "triage_not_an_incident";
+    case "off_topic":        return "triage_off_topic";
+    case "speculation":      return "triage_speculation";
+    case "low_severity":     return "triage_low_severity";
+    case "duplicate":        return "triage_duplicate";
+    default:                 return "triage_unhandled";
+  }
+}
+
+/** Backward-compat keyword matcher. Kept for legacy callers and tests;
+ *  new code should use `mapTriageReasonCode` with the structured `reason_code` field. */
 export function mapTriageReason(reason: string): FailureCode {
   const r = reason.toLowerCase();
   if (r.includes("duplicate")) return "triage_duplicate";

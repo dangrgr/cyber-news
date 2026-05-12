@@ -42,6 +42,7 @@ describe("triage pattern: schema round-trip", () => {
       significant: true,
       duplicate_of: null,
       reason: "...",
+      reason_code: null,
       confidence: "high", // not in the schema
     };
     const errs = validate(schema, bad as unknown as import("../../../src/patterns/validator.ts").JsonValue);
@@ -79,6 +80,7 @@ describe("triage pattern: template leaves literal JSON in prompt alone", () => {
         significant: false,
         duplicate_of: null,
         reason: "x",
+        reason_code: "not_an_incident",
       }),
     );
     await runPattern(TRIAGE_PATTERN, ALL_FIXTURES[0]!.input, {
@@ -89,6 +91,7 @@ describe("triage pattern: template leaves literal JSON in prompt alone", () => {
     // The example output block with JSON braces must survive verbatim.
     assert.match(system, /"decision": "process" \| "skip"/);
     assert.match(system, /"duplicate_of": string \| null/);
+    assert.match(system, /"reason_code"/);
   });
 });
 
