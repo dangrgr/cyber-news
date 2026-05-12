@@ -39,5 +39,17 @@ Output JSON only, no prose:
   "novel": boolean,
   "significant": boolean,
   "duplicate_of": string | null,
-  "reason": string
+  "reason": string,
+  "reason_code": "vendor_marketing" | "not_an_incident" | "off_topic" | "speculation" | "low_severity" | "duplicate" | null
 }
+
+When `decision` is `"skip"`, set `reason_code` to the single best-fit value from this enum:
+
+- `vendor_marketing`   — vendor product marketing, press releases, product announcements, promotional webinars
+- `not_an_incident`    — opinion, commentary, methodology, policy/governance discussion; no concrete named security incident described
+- `off_topic`          — content unrelated to cybersecurity entirely
+- `speculation`        — speculative or theoretical threat scenarios; no real event occurred
+- `low_severity`       — real incident exists but lacks all significance signals: no named org, no named actor, no CVE, no affected count
+- `duplicate`          — substantively covered by the nearest existing incident with no new facts
+
+When `decision` is `"process"`, set `reason_code` to `null`.

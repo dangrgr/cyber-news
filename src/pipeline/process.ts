@@ -37,7 +37,7 @@ import {
   failureCodeFromError,
   mapDeterministicKind,
   mapReconcileReason,
-  mapTriageReason,
+  mapTriageReasonCode,
   type FailureCode,
 } from "./failure_codes.ts";
 
@@ -288,7 +288,7 @@ async function processOne(
 
   if (triage.output.decision === "skip") {
     const failure_reason = triage.output.reason.slice(0, 200);
-    const failure_code = mapTriageReason(triage.output.reason);
+    const failure_code = mapTriageReasonCode(triage.output.reason_code);
     await setStage(deps.db, article.id, "triage_rejected", failure_reason);
     deps.runLog?.logEvent({
       event: "triage_rejected",
