@@ -5,13 +5,30 @@
 //         + 0.5 * keyword_hits
 //         + 0.3 * (source_tier === 'primary')
 //
-//   Score < 1.0  → stage_reached = 'pre_filtered', skip LLM entirely
-//   Score ≥ 1.0  → proceed to triage
+//   Score < threshold  → stage_reached = 'pre_filtered', skip LLM entirely
+//   Score ≥ threshold  → proceed to triage
+//
+// Threshold is 1.0 for every tier except `low_trust`, which is 1.2 (20%
+// stricter) — see `LOW_TRUST_THRESHOLD_MULTIPLIER`. `low_trust` is the
+// onboarding tier for new sources (PRD §7.1); the stricter bar lets us
+// observe noise without polluting Discord.
 //
 // "Kills 60–80% of articles before spending a token." Scoring weights live here
 // — any future tuning against logged results should change them in one place.
 
+import type { SourceTier } from "../ingest/sources.ts";
+
 export const SCORE_THRESHOLD = 1.0;
+
+// Stricter threshold multiplier for the experimental `low_trust` tier.
+// 1.2 = require 20% more score than a normal source. Picked to require at
+// least 3 keyword hits (1.5) OR a CVE+keyword combo (1.5) — a single
+// keyword (0.5) is not enough on its own from a new, unproven feed.
+export const LOW_TRUST_THRESHOLD_MULTIPLIER = 1.2;
+
+export function thresholdFor(tier: SourceTier): number {
+  return tier === "low_trust" ? SCORE_THRESHOLD * LOW_TRUST_THRESHOLD_MULTIPLIER : SCORE_THRESHOLD;
+}
 
 export const WEIGHTS = {
   cvePresent: 1.0,
@@ -52,7 +69,7 @@ const CVE_REGEX = /\bCVE-\d{4}-\d{4,7}\b/gi;
 export interface PrefilterInput {
   title: string;
   body: string;
-  sourceTier: "primary" | "secondary" | "aggregator" | "vendor" | "advisory";
+  sourceTier: SourceTier;
   /** Canonical entity-alias strings to substring-match (case-insensitive). */
   entityAliases: readonly string[];
 }
@@ -125,10 +142,13 @@ export function scorePrefilter(input: PrefilterInput): PrefilterResult {
   if (entityHits.length > 0) reasonParts.push(`entities=${entityHits.length}`);
   if (keywordHits.length > 0) reasonParts.push(`keywords=${keywordHits.length}`);
   if (input.sourceTier === "primary") reasonParts.push("primary_source");
+  if (input.sourceTier === "low_trust") reasonParts.push("low_trust_source");
+
+  const threshold = thresholdFor(input.sourceTier);
 
   return {
     score: Math.round(score * 100) / 100,
-    passed: score >= SCORE_THRESHOLD,
+    passed: score >= threshold,
     cves,
     entityHits,
     keywordHits,

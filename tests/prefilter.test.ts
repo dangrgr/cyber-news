@@ -1,7 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { scorePrefilter, SCORE_THRESHOLD, WEIGHTS } from "../src/pipeline/prefilter.ts";
+import {
+  scorePrefilter,
+  SCORE_THRESHOLD,
+  WEIGHTS,
+  LOW_TRUST_THRESHOLD_MULTIPLIER,
+  thresholdFor,
+} from "../src/pipeline/prefilter.ts";
 import {
   ALIASES,
   A_KREBS_SHINY,
@@ -119,5 +125,43 @@ describe("scorePrefilter: pass/skip outcomes", () => {
     assert.equal(r.passed, false, `score=${r.score} reason=${r.reason}`);
     assert.equal(r.cves.length, 0);
     assert.equal(r.entityHits.length, 0);
+  });
+});
+
+describe("scorePrefilter: low_trust tier threshold", () => {
+  it("applies the 1.2x threshold multiplier to low_trust only", () => {
+    assert.equal(thresholdFor("secondary"), SCORE_THRESHOLD);
+    assert.equal(thresholdFor("primary"), SCORE_THRESHOLD);
+    assert.equal(thresholdFor("low_trust"), SCORE_THRESHOLD * LOW_TRUST_THRESHOLD_MULTIPLIER);
+  });
+
+  it("same article passes at secondary but fails at low_trust when score sits at the base threshold", () => {
+    // Two keyword hits, no CVE, no known entity → score = 0.5 * 2 = 1.0.
+    // That clears SCORE_THRESHOLD (1.0) but not the low_trust bar (1.2).
+    const article = {
+      title: "Two-signal article",
+      body: "Ransomware operators announced a breach against an unnamed firm.",
+      entityAliases: [] as string[],
+    };
+
+    const atSecondary = scorePrefilter({ ...article, sourceTier: "secondary" });
+    const atLowTrust = scorePrefilter({ ...article, sourceTier: "low_trust" });
+
+    assert.equal(atSecondary.score, 1.0, `secondary score: ${atSecondary.score}`);
+    assert.equal(atLowTrust.score, 1.0, `low_trust score: ${atLowTrust.score}`);
+    assert.equal(atSecondary.passed, true, `secondary should pass: reason=${atSecondary.reason}`);
+    assert.equal(atLowTrust.passed, false, `low_trust should fail: reason=${atLowTrust.reason}`);
+    assert.ok(atLowTrust.reason.includes("low_trust_source"), `expected low_trust_source in reason: ${atLowTrust.reason}`);
+  });
+
+  it("low_trust still passes once the score clears 1.2 (CVE + keyword)", () => {
+    const r = scorePrefilter({
+      title: "Patch advisory",
+      body: "A new exploit chain leverages CVE-2026-1234 against unpatched systems.",
+      sourceTier: "low_trust",
+      entityAliases: [],
+    });
+    assert.ok(r.score >= thresholdFor("low_trust"), `expected score >= 1.2, got ${r.score}`);
+    assert.equal(r.passed, true);
   });
 });
