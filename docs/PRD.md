@@ -315,6 +315,15 @@ Initial set. All free, all pull-based.
 - GitHub Security Advisories — `github.com/advisories.atom` (filter to critical/high)
 - Substack sources — append `/feed` to any Substack URL (Ringmast4r, Risky Biz, Return on Security, TLDR Sec if RSS'd)
 
+**Source tiers.** Each entry in `src/ingest/sources.ts` carries a `tier`:
+
+- `primary` — investigative reporting we trust at face value. Adds +0.3 to the pre-filter score (§8.3).
+- `secondary` — solid mainstream security reporting. No score bonus, no penalty.
+- `aggregator` — recycles other reporting. No bonus.
+- `vendor` — vendor blog or PSIRT. No bonus from tier itself; vendor advisories carry weight downstream during extract/factcheck.
+- `advisory` — government / coordination-body advisories.
+- `low_trust` — **onboarding tier for new sources.** Pre-filter applies a 1.2× threshold multiplier (score must clear 1.2 instead of 1.0). The intent is to let a new feed run end-to-end so we can measure its signal/noise in run logs without polluting Discord. Promotion to `secondary` is a manual edit in `sources.ts` after we've seen enough volume to judge it. No source ships in this tier — it is added per-source as needed.
+
 ### 7.2 Structured data (APIs)
 
 - **CISA KEV** — `cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json` — poll daily, diff against local cache, emit new additions as high-signal events

@@ -1,6 +1,11 @@
 // RSS/Atom source list per PRD §7.1. Tier mapping per entities.yaml trusted_sources.
 
-export type SourceTier = "primary" | "secondary" | "aggregator" | "vendor" | "advisory";
+// "low_trust" is the onboarding tier for experimental sources. It exists so a
+// new feed can be added without polluting Discord while we measure its signal
+// quality — `scorePrefilter` applies a stricter threshold for it (see
+// `src/pipeline/prefilter.ts`). Promotion from `low_trust` to `secondary` is a
+// manual edit here.
+export type SourceTier = "primary" | "secondary" | "aggregator" | "vendor" | "advisory" | "low_trust";
 
 export interface SourceFeed {
   id: string;
