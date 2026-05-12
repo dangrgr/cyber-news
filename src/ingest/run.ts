@@ -26,7 +26,7 @@ import {
   loadAliasesIntoTable,
 } from "../turso/articles.ts";
 import { loadEntities, flattenAliases } from "../entities/load.ts";
-import { startRun } from "../util/run_log.ts";
+import { startRun, NOOP_LOGGER, type RunLogger } from "../util/run_log.ts";
 
 const DEDUP_LOOKBACK_DAYS = 30;
 
@@ -50,6 +50,7 @@ async function refreshEntityAliasCache(): Promise<string[]> {
 async function processSource(
   sourceIndex: number,
   aliases: readonly string[],
+  runLog: RunLogger,
 ): Promise<RunStats> {
   const source = SOURCES[sourceIndex]!;
   const client = getClient();
@@ -87,6 +88,29 @@ async function processSource(
         { id, canonicalUrl: canonical, title: entry.title, publishedAt: entry.publishedAt },
         recent,
       );
+
+      // Always emit dedup_decision — duplicate or unique — so score distributions
+      // can be histogrammed without changing any dedup behaviour.
+      runLog.logEvent({
+        event: "dedup_decision",
+        article_id: id,
+        candidate: {
+          article_id: id,
+          source_id: source.id,
+          source_tier: source.tier,
+          published_at: entry.publishedAt,
+          title: entry.title,
+        },
+        decision: dup.isDuplicate ? "duplicate" : "unique",
+        reason: dup.reason,
+        top_match:
+          dup.matchedArticleId !== null
+            ? { article_id: dup.matchedArticleId, score: dup.matchScore }
+            : dup.topMatchId !== null
+              ? { article_id: dup.topMatchId, score: dup.topScore }
+              : null,
+      });
+
       if (dup.isDuplicate) {
         stats.duplicates++;
         continue;
@@ -139,11 +163,11 @@ async function processSource(
   return stats;
 }
 
-export async function runIngest(): Promise<RunStats[]> {
+export async function runIngest(runLog: RunLogger = NOOP_LOGGER): Promise<RunStats[]> {
   const aliases = await refreshEntityAliasCache();
   const all: RunStats[] = [];
   for (let i = 0; i < SOURCES.length; i++) {
-    all.push(await processSource(i, aliases));
+    all.push(await processSource(i, aliases, runLog));
   }
   return all;
 }
@@ -151,7 +175,7 @@ export async function runIngest(): Promise<RunStats[]> {
 const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const log = startRun("ingest");
-  runIngest()
+  runIngest(log)
     .then(async (stats) => {
       const summary = stats.reduce(
         (acc, s) => {

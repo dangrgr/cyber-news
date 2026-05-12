@@ -32,6 +32,11 @@ export interface DedupResult {
   matchedIncidentId: string | null;
   matchScore: number | null;
   reason: "url_match" | "title_match" | "no_match";
+  // For no_match decisions: the highest-scoring candidate that still fell below
+  // TITLE_RATIO_THRESHOLD. Enables near-miss histograms without a behaviour change.
+  // Null for url_match/title_match (matchedArticleId/matchScore already carry that signal).
+  topMatchId: string | null;
+  topScore: number | null;
 }
 
 function withinWindow(a: string, b: string, days: number): boolean {
@@ -60,16 +65,21 @@ export function findDuplicate(
         matchedIncidentId: e.incidentId,
         matchScore: 100,
         reason: "url_match",
+        topMatchId: null,
+        topScore: null,
       };
     }
   }
 
   let best: { article: ExistingArticle; score: number } | null = null;
+  let bestBelow: { article: ExistingArticle; score: number } | null = null;
   for (const e of existing) {
     if (!withinWindow(candidate.publishedAt, e.publishedAt, DEDUP_WINDOW_DAYS)) continue;
     const score = titleRatio(candidate.title, e.title);
     if (score > TITLE_RATIO_THRESHOLD && (best === null || score > best.score)) {
       best = { article: e, score };
+    } else if (score <= TITLE_RATIO_THRESHOLD && (bestBelow === null || score > bestBelow.score)) {
+      bestBelow = { article: e, score };
     }
   }
 
@@ -80,6 +90,8 @@ export function findDuplicate(
       matchedIncidentId: best.article.incidentId,
       matchScore: best.score,
       reason: "title_match",
+      topMatchId: null,
+      topScore: null,
     };
   }
 
@@ -89,5 +101,7 @@ export function findDuplicate(
     matchedIncidentId: null,
     matchScore: null,
     reason: "no_match",
+    topMatchId: bestBelow?.article.id ?? null,
+    topScore: bestBelow?.score ?? null,
   };
 }

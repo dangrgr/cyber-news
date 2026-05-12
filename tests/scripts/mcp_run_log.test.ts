@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   compareRuns,
+  dedupHistogram,
   getArticleTrace,
   getRun,
   listRuns,
@@ -244,6 +245,65 @@ describe("recentHealth (fixture)", () => {
     assert.equal(h.runs, 1);
     assert.equal(h.runs_by_stage.process, 1);
     assert.equal(Object.keys(h.failure_breakdown).length, 0);
+  });
+});
+
+describe("dedupHistogram (fixture)", () => {
+  // FIXED_NOW = 2026-05-10T12:00Z; the ingest fixture cccccccc is 2026-05-09.
+  it("aggregates dedup_decision events from the ingest fixture", async () => {
+    const h = await dedupHistogram({ days: 7 }, { root: FIXTURE_ROOT, now: FIXED_NOW });
+    // 6 dedup_decision events in ingest-cccccccc.ndjson
+    assert.equal(h.total_decisions, 6);
+    assert.equal(h.duplicate_count, 3); // title_match x2 + url_match x1
+    assert.equal(h.unique_count, 3);    // no_match x3
+    assert.deepEqual(h.reason_breakdown, {
+      no_match: 3,
+      title_match: 2,
+      url_match: 1,
+    });
+    // Bucket for score 100 (url_match) and buckets for 88, 91 (title_match),
+    // plus 42, 15 (near-miss no_match with top_match set); one no_match has null top_match.
+    assert.ok(h.score_buckets.length > 0, "expected at least one score bucket");
+    // The 90-99 bucket should contain the score=91 event.
+    const bucket90 = h.score_buckets.find((b) => b.range === "90-99");
+    assert.ok(bucket90, "expected a 90-99 bucket");
+    assert.ok(bucket90!.count >= 1, "90-99 bucket should have ≥1 event");
+    assert.ok(bucket90!.sample_titles.length > 0, "90-99 bucket should have sample titles");
+    // Ensure the 100 bucket exists (url_match score=100).
+    const bucket100 = h.score_buckets.find((b) => b.range === "100-100");
+    assert.ok(bucket100, "expected a 100-100 bucket");
+    assert.equal(bucket100!.count, 1);
+  });
+
+  it("returns only ingest-stage runs (not process runs)", async () => {
+    const h = await dedupHistogram({ days: 7 }, { root: FIXTURE_ROOT, now: FIXED_NOW });
+    // Only the ingest fixture has dedup_decision events.
+    assert.equal(h.total_decisions, 6);
+  });
+
+  it("respects a narrow since/until window that excludes the ingest run", async () => {
+    const h = await dedupHistogram(
+      { since: "2026-05-10T00:00:00Z", until: "2026-05-10T23:59:59Z" },
+      { root: FIXTURE_ROOT, now: FIXED_NOW },
+    );
+    // No ingest runs on 2026-05-10 in the fixture.
+    assert.equal(h.total_decisions, 0);
+    assert.deepEqual(h.score_buckets, []);
+  });
+
+  it("returns empty shape when INDEX is missing", async () => {
+    const h = await dedupHistogram({ days: 1 }, { root: tmpRoot, now: FIXED_NOW });
+    assert.equal(h.total_decisions, 0);
+    assert.deepEqual(h.score_buckets, []);
+  });
+
+  it("window_days is null when since/until is used instead of days", async () => {
+    const h = await dedupHistogram(
+      { since: "2026-05-09T00:00:00Z", until: "2026-05-09T23:59:59Z" },
+      { root: FIXTURE_ROOT, now: FIXED_NOW },
+    );
+    assert.equal(h.window_days, null);
+    assert.equal(h.total_decisions, 6);
   });
 });
 
