@@ -1,26 +1,26 @@
 # Run summary — last 7 days
 
-Generated at 2026-05-12T04:30:07.423Z.
+Generated at 2026-05-12T05:25:01.658Z.
 
 ## Totals
 
 | Metric | Value |
 |---|---|
-| Runs | 47 |
+| Runs | 48 |
 | Runs (ingest) | 20 |
-| Runs (process) | 27 |
-| Articles processed | 81 |
-| Articles published | 26 |
-| Total cost | $0.5789 |
+| Runs (process) | 28 |
+| Articles processed | 83 |
+| Articles published | 27 |
+| Total cost | $0.5964 |
 
 ## Per-stage cost rollup
 
 | Stage | Calls | Input tokens | Output tokens | Cost |
 |---|---:|---:|---:|---:|
-| triage | 73 | 55561 | 9649 | $0.1038 |
-| extract | 67 | 145333 | 37468 | $0.3327 |
-| factcheck | 31 | 76329 | 13222 | $0.1424 |
-| total | 171 | 277223 | 60339 | $0.5789 |
+| triage | 75 | 57794 | 9954 | $0.1076 |
+| extract | 69 | 149779 | 38396 | $0.3418 |
+| factcheck | 32 | 78687 | 13684 | $0.1471 |
+| total | 176 | 286260 | 62034 | $0.5964 |
 
 ## Failure breakdown
 
@@ -29,7 +29,7 @@ Generated at 2026-05-12T04:30:07.423Z.
 | triage_unhandled | 22 |
 | factcheck_invalid_cve | 8 |
 | pattern_schema_invalid | 8 |
-| triage_vendor_marketing | 6 |
+| triage_vendor_marketing | 7 |
 | factcheck_claim_overreach | 5 |
 | factcheck_reconcile_disagree | 5 |
 | factcheck_date_out_of_window | 1 |
@@ -38,7 +38,7 @@ Generated at 2026-05-12T04:30:07.423Z.
 
 | Source | Failures |
 |---|---:|
-| csoonline | 16 |
+| csoonline | 17 |
 | darkreading | 12 |
 | arstechnica_sec | 8 |
 | bleepingcomputer | 5 |
