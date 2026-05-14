@@ -1,26 +1,26 @@
 # Run summary — last 7 days
 
-Generated at 2026-05-14T23:09:13.324Z.
+Generated at 2026-05-14T23:36:25.790Z.
 
 ## Totals
 
 | Metric | Value |
 |---|---|
-| Runs | 93 |
+| Runs | 94 |
 | Runs (ingest) | 42 |
-| Runs (process) | 51 |
-| Articles processed | 183 |
+| Runs (process) | 52 |
+| Articles processed | 184 |
 | Articles published | 77 |
-| Total cost | $1.4149 |
+| Total cost | $1.4208 |
 
 ## Per-stage cost rollup
 
 | Stage | Calls | Input tokens | Output tokens | Cost |
 |---|---:|---:|---:|---:|
-| triage | 175 | 159307 | 24253 | $0.2806 |
-| extract | 169 | 330306 | 91233 | $0.7865 |
+| triage | 176 | 160360 | 24396 | $0.2823 |
+| extract | 170 | 331976 | 91734 | $0.7906 |
 | factcheck | 86 | 187301 | 32107 | $0.3478 |
-| total | 430 | 676914 | 147593 | $1.4149 |
+| total | 432 | 679637 | 148237 | $1.4208 |
 
 ## Failure breakdown
 
@@ -29,7 +29,7 @@ Generated at 2026-05-14T23:09:13.324Z.
 | triage_vendor_marketing | 24 |
 | triage_unhandled | 22 |
 | triage_not_an_incident | 16 |
-| factcheck_claim_overreach | 10 |
+| factcheck_claim_overreach | 11 |
 | factcheck_reconcile_disagree | 9 |
 | factcheck_invalid_cve | 8 |
 | pattern_schema_invalid | 8 |
@@ -42,7 +42,7 @@ Generated at 2026-05-14T23:09:13.324Z.
 | Source | Failures |
 |---|---:|
 | csoonline | 26 |
-| bleepingcomputer | 18 |
+| bleepingcomputer | 19 |
 | darkreading | 13 |
 | thehackernews | 13 |
 | securityweek | 11 |
