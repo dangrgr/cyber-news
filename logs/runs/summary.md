@@ -1,13 +1,13 @@
 # Run summary — last 7 days
 
-Generated at 2026-05-14T22:19:38.041Z.
+Generated at 2026-05-14T23:09:13.324Z.
 
 ## Totals
 
 | Metric | Value |
 |---|---|
-| Runs | 92 |
-| Runs (ingest) | 41 |
+| Runs | 93 |
+| Runs (ingest) | 42 |
 | Runs (process) | 51 |
 | Articles processed | 183 |
 | Articles published | 77 |
