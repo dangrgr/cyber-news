@@ -1,26 +1,26 @@
 # Run summary — last 7 days
 
-Generated at 2026-05-15T20:19:32.080Z.
+Generated at 2026-05-15T20:36:34.983Z.
 
 ## Totals
 
 | Metric | Value |
 |---|---|
-| Runs | 110 |
+| Runs | 111 |
 | Runs (ingest) | 50 |
-| Runs (process) | 60 |
-| Articles processed | 213 |
-| Articles published | 95 |
-| Total cost | $1.7147 |
+| Runs (process) | 61 |
+| Articles processed | 217 |
+| Articles published | 98 |
+| Total cost | $1.7576 |
 
 ## Per-stage cost rollup
 
 | Stage | Calls | Input tokens | Output tokens | Cost |
 |---|---:|---:|---:|---:|
-| triage | 204 | 188876 | 28387 | $0.3308 |
-| extract | 206 | 405638 | 111091 | $0.9611 |
-| factcheck | 106 | 230964 | 38373 | $0.4228 |
-| total | 516 | 825478 | 177851 | $1.7147 |
+| triage | 208 | 192929 | 28972 | $0.3378 |
+| extract | 212 | 415746 | 113816 | $0.9848 |
+| factcheck | 109 | 236478 | 39705 | $0.4350 |
+| total | 529 | 845153 | 182493 | $1.7576 |
 
 ## Failure breakdown
 
@@ -28,7 +28,7 @@ Generated at 2026-05-15T20:19:32.080Z.
 |---|---:|
 | triage_vendor_marketing | 26 |
 | triage_unhandled | 22 |
-| triage_not_an_incident | 19 |
+| triage_not_an_incident | 20 |
 | factcheck_claim_overreach | 12 |
 | factcheck_reconcile_disagree | 11 |
 | factcheck_date_out_of_window | 9 |
@@ -46,7 +46,7 @@ Generated at 2026-05-15T20:19:32.080Z.
 | securityweek | 14 |
 | thehackernews | 14 |
 | darkreading | 13 |
-| cyberscoop | 10 |
+| cyberscoop | 11 |
 | arstechnica_sec | 8 |
 | therecord | 5 |
 | schneier | 2 |
