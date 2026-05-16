@@ -10,14 +10,15 @@ triggers.
 | # | Goal | Item | Status | Re-eval / blocker |
 |---|---|---|---|---|
 | 1 | Publish quality | Non-title `pattern_schema_invalid` | pending-data | 2026-05-18, non-title schema-invalid event |
-| 2 | Dedup quality | Cross-source dedup architecture (settle window vs. outbound dedup) | pending-data | 2026-05-19, after #23 produces 7d of near-miss + corroboration histograms |
+| 2 | Dedup quality | Cross-source dedup architecture (settle window vs. outbound dedup) | pending-data | 2026-05-19, after #23 near-miss histograms + corroboration telemetry sanity check |
 
 **Project state: observation mode.** Both remaining items are pending
 data; there are no active dispatch-ready items right now. The next
 decision point is **2026-05-18**, when Item #1's trigger window opens
-and a week of post-#23 telemetry becomes available for Item #2's
-re-eval. Do not dispatch new work in the interim — wait on data, then
-spec.
+and a week of post-#23 near-miss telemetry becomes available for Item
+#2's re-eval. Do not spec the architecture until the corroboration
+telemetry path is sanity-checked; absence of `incident_corroborated`
+events may mean instrumentation gap, not absence of corroboration.
 
 If a candidate feed materializes for the `low_trust` tier (shipped in
 #26 as a facility), that's a one-line edit in `src/ingest/sources.ts`
@@ -56,7 +57,10 @@ One Discord post per story, with rich corroboration. With #23, #24,
 and #26 shipped, the building blocks for the queue decision are in
 place:
 - `dedup_decision` events expose near-miss scores (#23).
-- `incident_corroborated` events expose cross-source arrival timing (#23).
+- `incident_corroborated` events are intended to expose cross-source
+  arrival timing (#23), but must be verified before decision-making:
+  current code only emits them when an article enters processing with
+  `incident_id` already populated.
 - `low_trust` tier provides a safe path to onboard new sources before
   promoting them — relevant if the data shows preferred-source delays
   matter (#26).
@@ -114,17 +118,25 @@ Both options need the same multi-field match scorer over
 entities/CVEs/actor/incident_date — that's the interesting work in
 either case. A wraps it in a queue; B wraps it in an outbound check.
 
-**Why deferred:** sizing either option requires the corroboration-
-arrival distribution (now flowing via `incident_corroborated` events
-from #23), and the design depends on whether near-miss scores cluster
-around an actionable threshold (also from #23's `dedup_decision`
-events). Building before the data is in is guessing.
+**Why deferred:** sizing either option requires two separate signals:
+near-miss score distribution from `dedup_decision`, and second-source
+arrival timing from `incident_corroborated` or an explicit substitute.
+The first signal is flowing. The second must be sanity-checked before
+it is treated as evidence. Building before the data path is known-good
+is guessing.
 
-**Re-evaluation trigger:** at least **7 days of `dedup_decision` and
-`incident_corroborated` events post-#23 merge**, earliest **2026-05-19**.
+**Re-evaluation trigger:** at least **7 days of `dedup_decision`
+events post-#23 merge**, earliest **2026-05-19**, plus one
+corroboration telemetry sanity check:
+- If `incident_corroborated` events are present, use them for timing.
+- If they are absent, first determine whether that means no
+  corroboration happened or the merge/instrumentation path is not
+  emitting. Do not treat zero events as zero corroboration without this
+  check.
 At re-eval, answer with data:
 1. What's the median / p75 / p90 time-to-2nd-corroboration per incident
-   (query via `runlog_get_run` + new `incident_corroborated` events)?
+   (from `incident_corroborated` if populated; otherwise mark blocked
+   and spec a small telemetry/merge fix before architecture work)?
 2. Where do near-miss scores cluster (60–69? 70–84? scattered) — query
    via `runlog_dedup_histogram`?
 3. How many Discord duplicates per week does the current threshold
@@ -136,6 +148,9 @@ At re-eval, answer with data:
 - Otherwise default to **Option B**: lower LoE, no freshness tax, PATCH
   path already exists. Canonical-source-quality is a polish win, not a
   correctness one.
+- If corroboration telemetry is blocked, do not choose Option A to
+  compensate; fix the merge/instrumentation path or use a manual
+  duplicate sample, then revisit.
 - Reach for **Option A** only if B ships and source-quality complaints
   emerge (wrong source winning the Discord slot becomes a recurring
   user-visible problem).
