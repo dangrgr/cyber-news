@@ -108,6 +108,15 @@ queried by the second pass.
   1–2 PRs.
 - **Wins:** no freshness tax; reuses the PATCH path that already exists.
 
+**Corroboration display (B presentation, not a separate option).**
+Once B has merged a duplicate, how the corroboration surfaces spans a
+spectrum: minimal — enrich the embed PATCH with an "Also reported by"
+sources field (webhook-only, no new auth, no channel change); maximal —
+thread-append each corroboration as its own message under the first
+post (needs a forum channel or a bot token, since the project is
+webhook-only today). Pick the point on that spectrum when B is specced
+post-re-eval; the minimal end is the safe default.
+
 ### Shared unknown
 
 Both options need the same multi-field match scorer over
