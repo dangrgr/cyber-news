@@ -1,6 +1,6 @@
 # Run summary — last 7 days
 
-Generated at 2026-05-17T14:11:08.670Z.
+Generated at 2026-05-17T15:16:51.580Z.
 
 ## Totals
 
@@ -9,18 +9,18 @@ Generated at 2026-05-17T14:11:08.670Z.
 | Runs | 136 |
 | Runs (ingest) | 59 |
 | Runs (process) | 77 |
-| Articles processed | 221 |
+| Articles processed | 220 |
 | Articles published | 103 |
-| Total cost | $1.8040 |
+| Total cost | $1.7910 |
 
 ## Per-stage cost rollup
 
 | Stage | Calls | Input tokens | Output tokens | Cost |
 |---|---:|---:|---:|---:|
-| triage | 212 | 197219 | 29461 | $0.3445 |
-| extract | 218 | 425856 | 116597 | $1.0088 |
-| factcheck | 114 | 246257 | 40872 | $0.4506 |
-| total | 544 | 869332 | 186930 | $1.8040 |
+| triage | 211 | 196417 | 29307 | $0.3430 |
+| extract | 216 | 422618 | 115756 | $1.0014 |
+| factcheck | 113 | 244525 | 40416 | $0.4466 |
+| total | 540 | 863560 | 185479 | $1.7910 |
 
 ## Failure breakdown
 
@@ -30,7 +30,7 @@ Generated at 2026-05-17T14:11:08.670Z.
 | triage_unhandled | 22 |
 | triage_not_an_incident | 20 |
 | factcheck_claim_overreach | 12 |
-| factcheck_reconcile_disagree | 11 |
+| factcheck_reconcile_disagree | 10 |
 | factcheck_date_out_of_window | 9 |
 | pattern_schema_invalid | 9 |
 | factcheck_invalid_cve | 7 |
@@ -42,7 +42,7 @@ Generated at 2026-05-17T14:11:08.670Z.
 | Source | Failures |
 |---|---:|
 | csoonline | 28 |
-| bleepingcomputer | 23 |
+| bleepingcomputer | 22 |
 | securityweek | 14 |
 | darkreading | 13 |
 | thehackernews | 13 |
