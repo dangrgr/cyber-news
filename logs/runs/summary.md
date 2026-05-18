@@ -1,32 +1,32 @@
 # Run summary — last 7 days
 
-Generated at 2026-05-18T20:46:13.142Z.
+Generated at 2026-05-18T21:37:38.470Z.
 
 ## Totals
 
 | Metric | Value |
 |---|---|
 | Runs | 135 |
-| Runs (ingest) | 59 |
-| Runs (process) | 76 |
-| Articles processed | 176 |
-| Articles published | 96 |
-| Total cost | $1.6128 |
+| Runs (ingest) | 58 |
+| Runs (process) | 77 |
+| Articles processed | 179 |
+| Articles published | 98 |
+| Total cost | $1.6297 |
 
 ## Per-stage cost rollup
 
 | Stage | Calls | Input tokens | Output tokens | Cost |
 |---|---:|---:|---:|---:|
-| triage | 174 | 176946 | 25047 | $0.3022 |
-| extract | 196 | 373218 | 106020 | $0.9033 |
-| factcheck | 106 | 220379 | 37378 | $0.4073 |
-| total | 476 | 770543 | 168445 | $1.6128 |
+| triage | 177 | 179720 | 25505 | $0.3072 |
+| extract | 198 | 376560 | 106939 | $0.9113 |
+| factcheck | 108 | 224054 | 37428 | $0.4112 |
+| total | 483 | 780334 | 169872 | $1.6297 |
 
 ## Failure breakdown
 
 | Failure code | Count |
 |---|---:|
-| triage_not_an_incident | 27 |
+| triage_not_an_incident | 28 |
 | triage_vendor_marketing | 22 |
 | factcheck_reconcile_disagree | 10 |
 | factcheck_date_out_of_window | 9 |
@@ -45,6 +45,6 @@ Generated at 2026-05-18T20:46:13.142Z.
 | securityweek | 13 |
 | cyberscoop | 9 |
 | therecord | 4 |
-| darkreading | 1 |
+| darkreading | 2 |
 | riskybiz | 1 |
 | schneier | 1 |
