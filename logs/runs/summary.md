@@ -1,26 +1,26 @@
 # Run summary — last 7 days
 
-Generated at 2026-05-18T23:45:15.112Z.
+Generated at 2026-05-19T01:50:34.941Z.
 
 ## Totals
 
 | Metric | Value |
 |---|---|
-| Runs | 135 |
-| Runs (ingest) | 58 |
+| Runs | 134 |
+| Runs (ingest) | 57 |
 | Runs (process) | 77 |
-| Articles processed | 185 |
-| Articles published | 102 |
-| Total cost | $1.6773 |
+| Articles processed | 183 |
+| Articles published | 100 |
+| Total cost | $1.6452 |
 
 ## Per-stage cost rollup
 
 | Stage | Calls | Input tokens | Output tokens | Cost |
 |---|---:|---:|---:|---:|
-| triage | 183 | 185511 | 26412 | $0.3176 |
-| extract | 204 | 387155 | 110239 | $0.9384 |
-| factcheck | 112 | 231023 | 38067 | $0.4214 |
-| total | 499 | 803689 | 174718 | $1.6773 |
+| triage | 181 | 183954 | 26151 | $0.3147 |
+| extract | 200 | 378551 | 108097 | $0.9190 |
+| factcheck | 110 | 226295 | 37022 | $0.4114 |
+| total | 491 | 788800 | 171270 | $1.6452 |
 
 ## Failure breakdown
 
