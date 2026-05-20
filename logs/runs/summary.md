@@ -1,35 +1,35 @@
 # Run summary — last 7 days
 
-Generated at 2026-05-20T01:37:00.956Z.
+Generated at 2026-05-20T01:51:06.356Z.
 
 ## Totals
 
 | Metric | Value |
 |---|---|
-| Runs | 133 |
+| Runs | 134 |
 | Runs (ingest) | 57 |
-| Runs (process) | 76 |
-| Articles processed | 184 |
-| Articles published | 94 |
-| Total cost | $1.6672 |
+| Runs (process) | 77 |
+| Articles processed | 187 |
+| Articles published | 95 |
+| Total cost | $1.6918 |
 
 ## Per-stage cost rollup
 
 | Stage | Calls | Input tokens | Output tokens | Cost |
 |---|---:|---:|---:|---:|
-| triage | 181 | 183901 | 26540 | $0.3166 |
-| extract | 202 | 387673 | 110571 | $0.9405 |
-| factcheck | 108 | 224887 | 37041 | $0.4101 |
-| total | 491 | 796461 | 174152 | $1.6672 |
+| triage | 184 | 187004 | 26996 | $0.3220 |
+| extract | 205 | 393800 | 112226 | $0.9549 |
+| factcheck | 109 | 227278 | 37528 | $0.4149 |
+| total | 498 | 808082 | 176750 | $1.6918 |
 
 ## Failure breakdown
 
 | Failure code | Count |
 |---|---:|
-| triage_not_an_incident | 31 |
+| triage_not_an_incident | 32 |
 | triage_vendor_marketing | 17 |
 | factcheck_reconcile_disagree | 14 |
-| factcheck_date_out_of_window | 12 |
+| factcheck_date_out_of_window | 13 |
 | factcheck_claim_overreach | 10 |
 | pattern_schema_invalid | 3 |
 | factcheck_entity_not_in_article | 2 |
@@ -40,8 +40,8 @@ Generated at 2026-05-20T01:37:00.956Z.
 | Source | Failures |
 |---|---:|
 | bleepingcomputer | 24 |
-| csoonline | 16 |
-| securityweek | 16 |
+| csoonline | 17 |
+| securityweek | 17 |
 | thehackernews | 15 |
 | cyberscoop | 10 |
 | therecord | 4 |
