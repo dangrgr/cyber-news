@@ -1,6 +1,6 @@
 # Run summary — last 7 days
 
-Generated at 2026-05-20T10:04:58.172Z.
+Generated at 2026-05-20T12:39:11.936Z.
 
 ## Totals
 
@@ -9,24 +9,24 @@ Generated at 2026-05-20T10:04:58.172Z.
 | Runs | 134 |
 | Runs (ingest) | 55 |
 | Runs (process) | 79 |
-| Articles processed | 197 |
-| Articles published | 100 |
-| Total cost | $1.7814 |
+| Articles processed | 192 |
+| Articles published | 96 |
+| Total cost | $1.7343 |
 
 ## Per-stage cost rollup
 
 | Stage | Calls | Input tokens | Output tokens | Cost |
 |---|---:|---:|---:|---:|
-| triage | 194 | 197197 | 28267 | $0.3385 |
-| extract | 216 | 419027 | 118213 | $1.0101 |
-| factcheck | 114 | 237808 | 38990 | $0.4328 |
-| total | 524 | 854032 | 185470 | $1.7814 |
+| triage | 189 | 192035 | 27542 | $0.3297 |
+| extract | 210 | 409659 | 114968 | $0.9845 |
+| factcheck | 110 | 230598 | 37885 | $0.4200 |
+| total | 509 | 832292 | 180395 | $1.7343 |
 
 ## Failure breakdown
 
 | Failure code | Count |
 |---|---:|
-| triage_not_an_incident | 32 |
+| triage_not_an_incident | 31 |
 | triage_vendor_marketing | 18 |
 | factcheck_date_out_of_window | 14 |
 | factcheck_reconcile_disagree | 14 |
@@ -41,7 +41,7 @@ Generated at 2026-05-20T10:04:58.172Z.
 |---|---:|
 | bleepingcomputer | 25 |
 | securityweek | 19 |
-| csoonline | 17 |
+| csoonline | 16 |
 | thehackernews | 16 |
 | cyberscoop | 10 |
 | therecord | 4 |
