@@ -8,14 +8,15 @@ You are verifying that a structured extraction is supported by its source articl
 {extraction_json}
 </extraction>
 
-**Check 1 — Field support.** For each non-null factual field in the extraction, classify:
+**Check 1 — Field support.** For each non-null factual field in the extraction, look for these issues:
 
-- SUPPORTED: The value is directly stated or clearly implied by the article.
 - UNSUPPORTED: The value appears nowhere in the article, or contradicts the article.
 - OVERREACH: The value is present, but more confident than the article warrants. Examples:
   - confidence is "confirmed" but the article contains claim markers
   - summary omits attribution discipline the article uses
   - affected_count is stated as fact when article presents it as a claim
+
+Fields that are correctly supported by the article should not appear in the issues array.
 
 **Check 2 — Relationship fidelity (from arxiv 2509.23573 §1.1: co-mention bias).** For every (actor, victim) pair in the extraction — every actor in `threat_actors_attributed` paired with every victim in `victim_orgs_confirmed` — find a specific sentence in the article that explicitly links them. If the article mentions both but never links them directly, that's a RELATIONSHIP_UNSUPPORTED issue. Example:
 - OK: "ShinyHunters hit Cisco with a breach exposing..." — explicit link
@@ -25,7 +26,8 @@ You are verifying that a structured extraction is supported by its source articl
 
 Rules:
 - Ignore `claim_markers_observed`, `primary_source`, `orgs_mentioned`, `actors_mentioned` — these are reporting metadata, not factual claims.
-- A value is SUPPORTED if any paraphrase or close restatement appears in the article.
+- A value is acceptable if any paraphrase or close restatement appears in the article — do not flag it.
+- Emit issues only for fields that fail one of the verdicts above. The issues array is for failures, not for enumerating verified fields.
 - Be strict on OVERREACH around confidence, summary wording, and relationship links. These are the most common failure modes.
 
 Output JSON only:

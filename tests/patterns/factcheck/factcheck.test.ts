@@ -56,6 +56,24 @@ describe("factcheck schema", () => {
     const errs = validate(schema, val);
     assert.ok(errs.some((e) => e.path.includes("verdict")));
   });
+
+  // Regression guard: in production we lost 3 articles to model outputs that emitted
+  // `verdict: "SUPPORTED"` with `detail: null` for fields that had no issue. The prompt
+  // previously taught SUPPORTED as a valid classification; the schema (rightly) only
+  // accepts failure verdicts and requires a string detail. If either constraint is ever
+  // loosened, this test surfaces it.
+  it("rejects a SUPPORTED verdict with null detail", async () => {
+    const schema = JSON.parse(await readFile("patterns/factcheck/schema.json", "utf-8")) as JsonSchema;
+    const val: JsonValue = {
+      overall: "fail",
+      issues: [
+        { field: "cves", verdict: "SUPPORTED", article_evidence: "all CVEs listed", detail: null },
+      ],
+    };
+    const errs = validate(schema, val);
+    assert.ok(errs.some((e) => e.path.includes("verdict")));
+    assert.ok(errs.some((e) => e.path.includes("detail")));
+  });
 });
 
 describe("factcheck pattern runner", () => {
