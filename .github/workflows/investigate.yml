@@ -16,7 +16,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: investigate-${{ inputs.incident_id }}
+  group: log-commit
   cancel-in-progress: false
 
 jobs:
@@ -58,24 +58,42 @@ jobs:
         if: always()
         # INCIDENT_ID is read into the env so we never interpolate
         # ${{ inputs.incident_id }} directly into a shell command line.
+        # Retry loop hardens against transient push errors and the rare race
+        # past the shared `log-commit` concurrency group.
         env:
           INCIDENT_ID: ${{ inputs.incident_id }}
         run: |
-          if [[ -n "$(git status --porcelain logs/investigations/)" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add logs/investigations/
-            # Validate the id before it lands in a commit message, even though
-            # workflow_dispatch inputs are already privileged.
-            if [[ ! "$INCIDENT_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
-              echo "Refusing to commit: INCIDENT_ID has unexpected characters." >&2
-              exit 1
-            fi
-            git commit -m "investigation: $INCIDENT_ID"
-            git push
-          else
+          set -e
+          if [[ -z "$(git status --porcelain logs/investigations/)" ]]; then
             echo "No investigation log to commit."
+            exit 0
           fi
+          # Validate the id before it lands in a commit message, even though
+          # workflow_dispatch inputs are already privileged.
+          if [[ ! "$INCIDENT_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo "Refusing to commit: INCIDENT_ID has unexpected characters." >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add logs/investigations/
+          git commit -m "investigation: $INCIDENT_ID"
+
+          for attempt in 1 2 3 4 5; do
+            if git push 2>/dev/null; then
+              exit 0
+            fi
+            echo "Push attempt $attempt failed; rebasing onto origin/main"
+            git fetch origin main
+            if ! git rebase origin/main; then
+              echo "Rebase conflict; aborting and retrying after backoff"
+              git rebase --abort
+            fi
+            sleep $((attempt * 2))
+          done
+
+          echo "Failed to push after 5 attempts"
+          exit 1
 
       - name: Generate run summary
         if: always()
@@ -86,16 +104,31 @@ jobs:
         # Investigate doesn't write per-run NDJSON (no startRun/finishRun
         # wrapping), but the rolling summary.md regenerates off whatever
         # process/ingest runs have committed since the last investigate.
-        # Concurrency keys are per-workflow group, so a process or ingest run
-        # can still land here at git-level — pull --rebase absorbs that race.
+        # Serialized with ingest/process via the shared `log-commit`
+        # concurrency group; retry loop is defense in depth.
         run: |
-          if [[ -n "$(git status --porcelain logs/runs/)" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add logs/runs/
-            git commit -m "investigate: summary ${{ github.run_id }} [skip ci]"
-            git pull --rebase origin main || true
-            git push
-          else
+          set -e
+          if [[ -z "$(git status --porcelain logs/runs/)" ]]; then
             echo "No run summary changes to commit."
+            exit 0
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add logs/runs/
+          git commit -m "investigate: summary ${{ github.run_id }} [skip ci]"
+
+          for attempt in 1 2 3 4 5; do
+            if git push 2>/dev/null; then
+              exit 0
+            fi
+            echo "Push attempt $attempt failed; rebasing onto origin/main"
+            git fetch origin main
+            if ! git rebase origin/main; then
+              echo "Rebase conflict; aborting and retrying after backoff"
+              git rebase --abort
+            fi
+            sleep $((attempt * 2))
+          done
+
+          echo "Failed to push after 5 attempts"
+          exit 1
