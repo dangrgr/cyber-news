@@ -454,32 +454,35 @@ async function resolveIncidentId(
   extraction: ExtractionOutput,
   deps: ProcessDeps,
 ): Promise<string> {
-  // If ingest already attached this article to an existing incident (fuzzy
-  // title match at dedup time), reuse it and bump corroboration.
-  if (article.incident_id) {
-    // Fetch before incrementing to capture first_seen_at and pre-bump count.
-    const existingIncident = deps.runLog ? await getIncident(deps.db, article.incident_id) : null;
-    await addSourceToIncident(deps.db, article.incident_id, article.url);
-    if (existingIncident && deps.runLog) {
-      const alreadyPresent = existingIncident.source_urls.includes(article.url);
-      const corroborationCountAfter = alreadyPresent
-        ? existingIncident.corroboration_count
-        : existingIncident.source_urls.length + 1;
+  const newId = incidentIdFor(article, extraction);
+  const existing = await getIncident(deps.db, newId);
+
+  if (existing) {
+    // Corroboration: another source is reporting an incident we already have.
+    // Capture first_seen_at before the URL append so the timing event reflects
+    // the original publish.
+    const alreadyPresent = existing.source_urls.includes(article.url);
+    if (!alreadyPresent) {
+      await addSourceToIncident(deps.db, newId, article.url);
+    }
+    if (deps.runLog) {
       const sourceTier = SOURCES.find((s) => s.id === article.source_id)?.tier ?? "unknown";
+      const corroborationCountAfter = alreadyPresent
+        ? existing.corroboration_count
+        : existing.source_urls.length + 1;
       deps.runLog.logEvent({
         event: "incident_corroborated",
-        incident_id: article.incident_id,
+        incident_id: newId,
         corroborator_article_id: article.id,
         corroborator_source_id: article.source_id,
         corroborator_source_tier: sourceTier,
-        time_since_first_publish_ms: Date.now() - Date.parse(existingIncident.first_seen_at),
+        time_since_first_publish_ms: Date.now() - Date.parse(existing.first_seen_at),
         corroboration_count_after: corroborationCountAfter,
       });
     }
-    return article.incident_id;
+    return newId;
   }
 
-  const newId = incidentIdFor(article, extraction);
   await insertIncident(deps.db, {
     id: newId,
     title: extraction.title || article.title,

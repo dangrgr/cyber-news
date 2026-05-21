@@ -1139,3 +1139,128 @@ describe("processPendingArticles: null title fallback", () => {
     assert.equal(discord.posts.length, 1);
   });
 });
+
+describe("processPendingArticles: corroboration", () => {
+  it("second article with same victim+actor+date PATCHes the existing incident and emits incident_corroborated", async () => {
+    // Two sources reporting the same story. incidentIdFor() keys on
+    // (incident_date, victim_org[0], threat_actor[0]) — both extractions agree,
+    // so they collapse to the same deterministic incident id.
+    await seedArticle(db, {
+      id: "art-krebs",
+      sourceId: "krebs",
+      url: "https://krebsonsecurity.com/shinyhunters-cisco",
+      canonicalUrl: "https://krebsonsecurity.com/shinyhunters-cisco",
+    });
+    await seedArticle(db, {
+      id: "art-bleep",
+      sourceId: "bleepingcomputer",
+      url: "https://www.bleepingcomputer.com/news/security/shinyhunters-cisco",
+      canonicalUrl: "https://www.bleepingcomputer.com/news/security/shinyhunters-cisco",
+    });
+
+    const sharedExtraction = JSON.stringify({
+      title: "ShinyHunters breaches Cisco via Salesforce",
+      summary: "ShinyHunters exfiltrated 4.2M Cisco records; Cisco confirmed access in SEC 8-K.",
+      victim_orgs_confirmed: ["Cisco"],
+      orgs_mentioned: [],
+      threat_actors_attributed: ["ShinyHunters"],
+      actors_mentioned: [],
+      cves: [],
+      initial_access_vector: "Salesforce vishing",
+      ttps: [],
+      impact: {
+        affected_count: 4200000,
+        affected_count_unit: "records",
+        data_exfil_size: null,
+        sector: null,
+        geographic_scope: null,
+        service_disruption: null,
+      },
+      incident_date: "2026-04-20",
+      confidence: "reported",
+      claim_markers_observed: [],
+      primary_source: "article_itself",
+    });
+
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "process",
+          novel: true,
+          significant: true,
+          duplicate_of: null,
+          reason: "Named victim and actor.",
+          reason_code: null,
+        }),
+      extract: () => sharedExtraction,
+      factcheck: () => JSON.stringify({ overall: "pass", issues: [] }),
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => {
+        events.push(e);
+      },
+      finishRun: async () => {},
+    };
+
+    const discord = recordingDiscord();
+    const summary = await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord,
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+
+    assert.equal(summary.published, 2, "both articles should reach published stage");
+    assert.equal(discord.posts.length, 1, "first article posts a new Discord message");
+    assert.equal(discord.patches.length, 1, "second article corroborates via PATCH, not a new post");
+
+    // Both articles attached to the same incident; incident accumulates both source URLs.
+    const articles = await db.execute({
+      sql: `SELECT id, incident_id FROM articles WHERE id IN (?, ?)`,
+      args: ["art-krebs", "art-bleep"],
+    });
+    const incidentIds = new Set(articles.rows.map((r) => String(r.incident_id)));
+    assert.equal(incidentIds.size, 1, "both articles share one incident_id");
+    const incidentId = [...incidentIds][0]!;
+
+    const inc = await db.execute({
+      sql: `SELECT source_urls, corroboration_count FROM incidents WHERE id = ?`,
+      args: [incidentId],
+    });
+    const sourceUrls = JSON.parse(String(inc.rows[0]!.source_urls)) as string[];
+    assert.deepEqual(
+      sourceUrls.sort(),
+      [
+        "https://krebsonsecurity.com/shinyhunters-cisco",
+        "https://www.bleepingcomputer.com/news/security/shinyhunters-cisco",
+      ].sort(),
+    );
+    assert.equal(Number(inc.rows[0]!.corroboration_count), 2);
+
+    // Exactly one incident_corroborated event, fired by the second article.
+    const corroborated = events.filter((e) => e.event === "incident_corroborated");
+    assert.equal(corroborated.length, 1);
+    const ev = corroborated[0]!;
+    assert.equal(ev.incident_id, incidentId);
+    assert.equal(ev.corroborator_article_id, "art-bleep");
+    assert.equal(ev.corroborator_source_id, "bleepingcomputer");
+    assert.equal(ev.corroborator_source_tier, "secondary");
+    assert.equal(ev.corroboration_count_after, 2);
+    assert.ok(
+      typeof ev.time_since_first_publish_ms === "number" && ev.time_since_first_publish_ms >= 0,
+      "time_since_first_publish_ms should be a non-negative number",
+    );
+  });
+});
