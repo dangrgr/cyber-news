@@ -1,35 +1,35 @@
 # Run summary — last 7 days
 
-Generated at 2026-05-21T22:07:34.966Z.
+Generated at 2026-05-21T23:16:51.095Z.
 
 ## Totals
 
 | Metric | Value |
 |---|---|
-| Runs | 131 |
-| Runs (ingest) | 53 |
+| Runs | 130 |
+| Runs (ingest) | 52 |
 | Runs (process) | 78 |
-| Articles processed | 195 |
-| Articles published | 97 |
-| Total cost | $1.7243 |
+| Articles processed | 191 |
+| Articles published | 95 |
+| Total cost | $1.7034 |
 
 ## Per-stage cost rollup
 
 | Stage | Calls | Input tokens | Output tokens | Cost |
 |---|---:|---:|---:|---:|
-| triage | 192 | 194429 | 27696 | $0.3329 |
-| extract | 213 | 408617 | 116456 | $0.9909 |
-| factcheck | 109 | 218790 | 36348 | $0.4005 |
-| total | 514 | 821836 | 180500 | $1.7243 |
+| triage | 188 | 190693 | 27172 | $0.3266 |
+| extract | 210 | 404099 | 115132 | $0.9798 |
+| factcheck | 107 | 216101 | 36190 | $0.3971 |
+| total | 505 | 810893 | 178494 | $1.7034 |
 
 ## Failure breakdown
 
 | Failure code | Count |
 |---|---:|
-| triage_not_an_incident | 34 |
+| triage_not_an_incident | 33 |
 | factcheck_date_out_of_window | 17 |
 | triage_vendor_marketing | 15 |
-| factcheck_claim_overreach | 14 |
+| factcheck_claim_overreach | 13 |
 | factcheck_reconcile_disagree | 12 |
 | pattern_schema_invalid | 3 |
 | factcheck_entity_not_in_article | 2 |
@@ -43,8 +43,8 @@ Generated at 2026-05-21T22:07:34.966Z.
 | securityweek | 22 |
 | thehackernews | 17 |
 | csoonline | 15 |
-| cyberscoop | 9 |
-| therecord | 6 |
+| cyberscoop | 8 |
+| therecord | 5 |
 | riskybiz | 3 |
 | darkreading | 2 |
 | krebs | 1 |
