@@ -11,14 +11,15 @@ triggers.
 |---|---|---|---|---|
 | 1 | Publish quality | Non-title `pattern_schema_invalid` | pending-data | 2026-05-18, non-title schema-invalid event |
 | 2 | Dedup quality | Cross-source dedup architecture (settle window vs. outbound dedup) | pending-data | 2026-05-19, after #23 near-miss histograms + corroboration telemetry sanity check |
+| 3 | Dedup quality | Incident-id keying / corroboration starvation (#35) | pending-data | 2026-05-29, ≥1 same-incident pair with diverging `incident_created` keys |
 
-**Project state: observation mode.** Both remaining items are pending
-data; there are no active dispatch-ready items right now. The next
-decision point is **2026-05-18**, when Item #1's trigger window opens
-and a week of post-#23 near-miss telemetry becomes available for Item
-#2's re-eval. Do not spec the architecture until the corroboration
-telemetry path is sanity-checked; absence of `incident_corroborated`
-events may mean instrumentation gap, not absence of corroboration.
+**Project state: observation mode.** All items are pending data; no
+dispatch-ready items right now. Items #1 and #2's trigger windows
+(2026-05-18 / -19) have opened and are due a data re-eval against current
+run logs. The corroboration telemetry sanity check (Item #2's blocker) was
+done 2026-05-22: it surfaced an instrumentation gap (fixed in #34) **and**
+a keying gap, split out as Item #3 / issue #35. Next dated trigger:
+**2026-05-29** (Item #3).
 
 If a candidate feed materializes for the `low_trust` tier (shipped in
 #26 as a facility), that's a one-line edit in `src/ingest/sources.ts`
@@ -57,10 +58,11 @@ One Discord post per story, with rich corroboration. With #23, #24,
 and #26 shipped, the building blocks for the queue decision are in
 place:
 - `dedup_decision` events expose near-miss scores (#23).
-- `incident_corroborated` events are intended to expose cross-source
-  arrival timing (#23), but must be verified before decision-making:
-  current code only emits them when an article enters processing with
-  `incident_id` already populated.
+- `incident_corroborated` events expose cross-source arrival timing (#23).
+  Sanity-checked 2026-05-22: the dead-branch bug (fixed in #32) was masking
+  the deeper problem that the incident key rarely collides across sources,
+  so corroboration almost never fires — split out as Item #3 / issue #35.
+  `incident_id` is now in the run log (#34).
 - `low_trust` tier provides a safe path to onboard new sources before
   promoting them — relevant if the data shows preferred-source delays
   matter (#26).
@@ -164,10 +166,58 @@ At re-eval, answer with data:
   emerge (wrong source winning the Discord slot becomes a recurring
   user-visible problem).
 
+## Item 3 — Incident-id keying (corroboration starvation)
+
+**Pending data.** Tracked as GitHub issue #35. This is the outcome of Item
+#2's corroboration telemetry sanity check (done 2026-05-22): cross-source
+corroboration almost never fires in production — not (only) because of the
+dead code path #32 fixed, but because the deterministic incident id rarely
+collides across sources, so `incident_corroborated` has nothing to fire on.
+
+`incidentKey()` (`src/pipeline/process.ts`) hashes
+`incident_date | victim_orgs_confirmed[0] | threat_actors_attributed[0]`.
+For vuln disclosures there is no actor, so the key reduces to `date|victim`
+— fragile to "Cisco" vs "Cisco Secure Workload" or one-day date drift.
+Observed miss: securityweek + bleepingcomputer on the same Cisco Secure
+Workload flaw (shared CVE-2026-20223) → two single-source posts, no PATCH.
+
+**Now debuggable.** #34 added the `incident_created` event logging
+`key_date`/`key_victim`/`key_actor` (the exact hash inputs) and put
+`incident_id` on the published `article_done`. Diagnose by grepping
+`incident_created` for same-victim pairs that landed on different ids.
+
+**Re-evaluation trigger:** first week (earliest **2026-05-29**, ~7 days of
+post-#34 cron data) where committed logs show **≥1 same-incident pair with
+diverging `incident_created` keys**. Until then, no spec — the key_* values
+have to tell us which normalization to apply (victim canonicalization via
+`entities.yaml` / CVE-in-key / date bucket / fuzzy fallback).
+
+**Relationship to Item #2:** distinct mechanism (process-time incident
+keying vs. ingest-time `titleRatio`), but both serve one-post-per-story.
+Fixing the key is lower-LoE and may catch some misses before the dedup
+architecture question arises; its data is flowing now, so sequence #35
+ahead of Item #2.
+
 ---
 
 # Recently shipped
 
+- **#34** (`a1f9a5d`, 2026-05-22) — Incident run-log visibility. `incident_id`
+  on the published `article_done`; new `incident_created` event logging the
+  hash inputs (`key_date`/`key_victim`/`key_actor`). Pure observability; id
+  output unchanged. Makes Item #3 / issue #35 diagnosable from the logs.
+- **#33** (`590538b`, 2026-05-21) — CI log-commit race fix. Shared
+  `log-commit` concurrency group + push-retry loop across ingest/process/
+  investigate workflows, replacing `pull --rebase || true` that swallowed
+  rebase conflicts and silently dropped run-log commits on `main` (explains
+  the stale local `logs/runs/` seen during the telemetry audit).
+- **#32** (`79b784e`, 2026-05-21) — Corroborate on deterministic id match.
+  Unified `resolveIncidentId` so a second source on an existing incident
+  PATCHes + emits `incident_corroborated`; the prior `if (article.incident_id)`
+  branch was dead. Necessary-but-not-sufficient: keys rarely collide → Item #3.
+- **#31** (`9fe3b54`, 2026-05-21) — Factcheck prompt/schema alignment.
+  Dropped the `SUPPORTED` verdict the schema rejected (3 articles/9d lost to
+  `verdict not in enum` parse errors; 2026-05-15/-18/-19). Zero recurrences.
 - **#26** (`ab548ca`, 2026-05-12) — Low-trust source tier. Added
   `"low_trust"` to `SourceTier` union; `scorePrefilter` applies a 1.2×
   threshold multiplier for it (single keyword no longer enough to pass
