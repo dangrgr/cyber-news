@@ -162,6 +162,7 @@ export async function processPendingArticles(deps: ProcessDeps): Promise<Process
     let failure_code: FailureCode | undefined;
     let failure_codes: FailureCode[] | undefined;
     let failure_reason: string | undefined;
+    let incident_id: string | undefined;
     try {
       const result = await processOne(article, deps, env, entities, stages);
       addStage(summary.costs.triage, result.stageCosts.triage);
@@ -170,6 +171,7 @@ export async function processPendingArticles(deps: ProcessDeps): Promise<Process
       failure_code = result.failure_code;
       failure_codes = result.failure_codes;
       failure_reason = result.failure_reason;
+      incident_id = result.incident_id;
       switch (result.kind) {
         case "triage_rejected":
           summary.triage_rejected++;
@@ -221,6 +223,7 @@ export async function processPendingArticles(deps: ProcessDeps): Promise<Process
       ...(failure_code !== undefined ? { failure_code } : {}),
       ...(failure_codes !== undefined ? { failure_codes } : {}),
       ...(failure_reason !== undefined ? { failure_reason } : {}),
+      ...(incident_id !== undefined ? { incident_id } : {}),
     });
   }
 
@@ -245,6 +248,8 @@ interface ProcessOneResult {
   /** Free-form reason string preserved for grep-ability. Mirrors what
    *  goes into `articles.failure_reason`. Undefined on the published path. */
   failure_reason?: string;
+  /** Incident the article attached to. Set only on the published path. */
+  incident_id?: string;
 }
 
 async function processOne(
@@ -446,7 +451,7 @@ async function processOne(
     { dbClient: deps.db, discord: deps.discord },
   );
 
-  return { kind: "published", stageCosts };
+  return { kind: "published", stageCosts, incident_id: incidentId };
 }
 
 async function resolveIncidentId(
@@ -454,7 +459,8 @@ async function resolveIncidentId(
   extraction: ExtractionOutput,
   deps: ProcessDeps,
 ): Promise<string> {
-  const newId = incidentIdFor(article, extraction);
+  const key = incidentKey(article, extraction);
+  const newId = incidentIdFromKey(key);
   const existing = await getIncident(deps.db, newId);
 
   if (existing) {
@@ -501,17 +507,41 @@ async function resolveIncidentId(
     primarySource: extraction.primary_source,
     sourceUrls: [article.url],
   });
+  // Symmetric with incident_corroborated. key_* are the exact hash inputs, so
+  // an audit can see why obviously-same cross-source incidents got distinct ids.
+  deps.runLog?.logEvent({
+    event: "incident_created",
+    incident_id: newId,
+    article_id: article.id,
+    source_id: article.source_id,
+    key_date: key.date,
+    key_victim: key.victim,
+    key_actor: key.actor,
+  });
   return newId;
 }
 
+/** The components the deterministic incident id is hashed from. Exposed so the
+ *  `incident_created` run-log event can record exactly what produced the id —
+ *  letting an audit see *why* two cross-source articles did or didn't collapse. */
+interface IncidentKey {
+  date: string;
+  victim: string;
+  actor: string;
+}
+
+function incidentKey(article: ArticleRow, extraction: ExtractionOutput): IncidentKey {
+  return {
+    date: extraction.incident_date ?? article.published_at.slice(0, 10),
+    victim: (extraction.victim_orgs_confirmed[0] ?? article.title).toLowerCase().trim(),
+    actor: (extraction.threat_actors_attributed[0] ?? "").toLowerCase().trim(),
+  };
+}
+
 /** Deterministic id so two processors hitting the same article produce the same incident id. */
-function incidentIdFor(article: ArticleRow, extraction: ExtractionOutput): string {
-  const key = [
-    extraction.incident_date ?? article.published_at.slice(0, 10),
-    (extraction.victim_orgs_confirmed[0] ?? article.title).toLowerCase().trim(),
-    (extraction.threat_actors_attributed[0] ?? "").toLowerCase().trim(),
-  ].join("|");
-  return "inc-" + createHash("sha256").update(key).digest("hex").slice(0, 16);
+function incidentIdFromKey(key: IncidentKey): string {
+  const joined = [key.date, key.victim, key.actor].join("|");
+  return "inc-" + createHash("sha256").update(joined).digest("hex").slice(0, 16);
 }
 
 function buildCorroborationQuery(e: ExtractionOutput): string | null {
