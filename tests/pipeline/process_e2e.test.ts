@@ -1142,7 +1142,7 @@ describe("processPendingArticles: null title fallback", () => {
 
 describe("processPendingArticles: corroboration", () => {
   it("second article with same victim+actor+date PATCHes the existing incident and emits incident_corroborated", async () => {
-    // Two sources reporting the same story. incidentIdFor() keys on
+    // Two sources reporting the same story. incidentKey() keys on
     // (incident_date, victim_org[0], threat_actor[0]) — both extractions agree,
     // so they collapse to the same deterministic incident id.
     await seedArticle(db, {
@@ -1261,6 +1261,170 @@ describe("processPendingArticles: corroboration", () => {
     assert.ok(
       typeof ev.time_since_first_publish_ms === "number" && ev.time_since_first_publish_ms >= 0,
       "time_since_first_publish_ms should be a non-negative number",
+    );
+
+    // The first article CREATES the incident; the second CORROBORATES it.
+    // Exactly one incident_created, fired by the creator (not the corroborator).
+    const created = events.filter((e) => e.event === "incident_created");
+    assert.equal(created.length, 1, "only the first article creates the incident");
+    assert.equal(created[0]!.incident_id, incidentId);
+    assert.equal(created[0]!.article_id, "art-krebs");
+
+    // Both published article_done events carry the shared incident_id, so a
+    // future audit can group published articles by incident from the run log.
+    const dones = events.filter(
+      (e) => e.event === "article_done" && e.terminal_state === "published",
+    );
+    assert.equal(dones.length, 2);
+    for (const d of dones) assert.equal(d.incident_id, incidentId);
+  });
+});
+
+describe("processPendingArticles: incident_id visibility", () => {
+  it("published article_done carries incident_id and incident_created logs the key components", async () => {
+    const artId = await seedArticle(db, { id: "art-vis" });
+
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "process",
+          novel: true,
+          significant: true,
+          duplicate_of: null,
+          reason: "Named victim and actor.",
+          reason_code: null,
+        }),
+      extract: () =>
+        JSON.stringify({
+          title: "ShinyHunters breaches Cisco via Salesforce",
+          summary: "ShinyHunters exfiltrated 4.2M Cisco records.",
+          victim_orgs_confirmed: ["Cisco"],
+          orgs_mentioned: [],
+          threat_actors_attributed: ["ShinyHunters"],
+          actors_mentioned: [],
+          cves: [],
+          initial_access_vector: "Salesforce vishing",
+          ttps: [],
+          impact: {
+            affected_count: 4200000,
+            affected_count_unit: "records",
+            data_exfil_size: null,
+            sector: null,
+            geographic_scope: null,
+            service_disruption: null,
+          },
+          incident_date: "2026-04-20",
+          confidence: "reported",
+          claim_markers_observed: [],
+          primary_source: "article_itself",
+        }),
+      factcheck: () => JSON.stringify({ overall: "pass", issues: [] }),
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => {
+        events.push(e);
+      },
+      finishRun: async () => {},
+    };
+
+    const summary = await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord: recordingDiscord(),
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+    assert.equal(summary.published, 1);
+
+    // The DB is the source of truth for which incident the article attached to.
+    const row = await db.execute({
+      sql: `SELECT incident_id FROM articles WHERE id = ?`,
+      args: [artId],
+    });
+    const incidentId = String(row.rows[0]!.incident_id);
+    assert.match(incidentId, /^inc-/);
+
+    // article_done for the published article carries that same incident_id.
+    const done = events.find(
+      (e) => e.event === "article_done" && e.article_id === artId,
+    );
+    assert.ok(done, "expected an article_done for the published article");
+    assert.equal(done!.terminal_state, "published");
+    assert.equal(done!.incident_id, incidentId);
+
+    // incident_created fires once, logging the exact key components the
+    // deterministic incident id is derived from (so keying misses are debuggable).
+    const created = events.filter((e) => e.event === "incident_created");
+    assert.equal(created.length, 1);
+    const ev = created[0]!;
+    assert.equal(ev.incident_id, incidentId);
+    assert.equal(ev.article_id, artId);
+    assert.equal(ev.source_id, "krebs");
+    assert.equal(ev.key_date, "2026-04-20");
+    assert.equal(ev.key_victim, "cisco");
+    assert.equal(ev.key_actor, "shinyhunters");
+  });
+
+  it("non-published articles emit no incident_id and no incident_created", async () => {
+    await seedArticle(db, { id: "art-vis-skip" });
+
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "skip",
+          novel: false,
+          significant: false,
+          duplicate_of: null,
+          reason: "Vendor marketing content.",
+          reason_code: "vendor_marketing",
+        }),
+      extract: () => "{}",
+      factcheck: () => "{}",
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => {
+        events.push(e);
+      },
+      finishRun: async () => {},
+    };
+
+    await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord: recordingDiscord(),
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+
+    const done = events.find((e) => e.event === "article_done");
+    assert.equal(done!.terminal_state, "triage_rejected");
+    assert.equal(done!.incident_id, undefined, "rejected article has no incident_id");
+    assert.equal(
+      events.filter((e) => e.event === "incident_created").length,
+      0,
+      "no incident is created for a rejected article",
     );
   });
 });
