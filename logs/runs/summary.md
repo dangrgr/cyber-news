@@ -1,26 +1,26 @@
 # Run summary — last 7 days
 
-Generated at 2026-05-22T17:29:11.561Z.
+Generated at 2026-05-22T19:02:20.040Z.
 
 ## Totals
 
 | Metric | Value |
 |---|---|
-| Runs | 128 |
+| Runs | 127 |
 | Runs (ingest) | 52 |
-| Runs (process) | 76 |
-| Articles processed | 191 |
-| Articles published | 92 |
-| Total cost | $1.6868 |
+| Runs (process) | 75 |
+| Articles processed | 188 |
+| Articles published | 91 |
+| Total cost | $1.6519 |
 
 ## Per-stage cost rollup
 
 | Stage | Calls | Input tokens | Output tokens | Cost |
 |---|---:|---:|---:|---:|
-| triage | 189 | 191036 | 27401 | $0.3280 |
-| extract | 211 | 389589 | 115354 | $0.9664 |
-| factcheck | 105 | 207642 | 36954 | $0.3924 |
-| total | 505 | 788267 | 179709 | $1.6868 |
+| triage | 186 | 187827 | 26919 | $0.3224 |
+| extract | 207 | 382148 | 112607 | $0.9452 |
+| factcheck | 103 | 203074 | 36236 | $0.3843 |
+| total | 496 | 773049 | 175762 | $1.6519 |
 
 ## Failure breakdown
 
@@ -29,8 +29,8 @@ Generated at 2026-05-22T17:29:11.561Z.
 | triage_not_an_incident | 36 |
 | factcheck_date_out_of_window | 16 |
 | triage_vendor_marketing | 15 |
-| factcheck_claim_overreach | 14 |
-| factcheck_reconcile_disagree | 13 |
+| factcheck_claim_overreach | 13 |
+| factcheck_reconcile_disagree | 12 |
 | factcheck_entity_not_in_article | 2 |
 | pattern_schema_invalid | 2 |
 | triage_speculation | 1 |
@@ -40,7 +40,7 @@ Generated at 2026-05-22T17:29:11.561Z.
 | Source | Failures |
 |---|---:|
 | securityweek | 21 |
-| bleepingcomputer | 20 |
+| bleepingcomputer | 18 |
 | thehackernews | 18 |
 | csoonline | 17 |
 | cyberscoop | 8 |
