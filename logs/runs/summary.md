@@ -1,32 +1,32 @@
 # Run summary — last 7 days
 
-Generated at 2026-05-25T20:43:30.296Z.
+Generated at 2026-05-25T21:52:05.875Z.
 
 ## Totals
 
 | Metric | Value |
 |---|---|
 | Runs | 131 |
-| Runs (ingest) | 60 |
-| Runs (process) | 71 |
-| Articles processed | 180 |
-| Articles published | 86 |
-| Total cost | $1.5943 |
+| Runs (ingest) | 61 |
+| Runs (process) | 70 |
+| Articles processed | 177 |
+| Articles published | 84 |
+| Total cost | $1.5774 |
 
 ## Per-stage cost rollup
 
 | Stage | Calls | Input tokens | Output tokens | Cost |
 |---|---:|---:|---:|---:|
-| triage | 179 | 180374 | 25882 | $0.3098 |
-| extract | 202 | 372625 | 110984 | $0.9275 |
-| factcheck | 97 | 191313 | 33141 | $0.3570 |
-| total | 478 | 744312 | 170007 | $1.5943 |
+| triage | 176 | 177600 | 25424 | $0.3047 |
+| extract | 200 | 369283 | 110065 | $0.9196 |
+| factcheck | 95 | 187638 | 33091 | $0.3531 |
+| total | 471 | 734521 | 168580 | $1.5774 |
 
 ## Failure breakdown
 
 | Failure code | Count |
 |---|---:|
-| triage_not_an_incident | 29 |
+| triage_not_an_incident | 28 |
 | factcheck_date_out_of_window | 19 |
 | triage_vendor_marketing | 17 |
 | factcheck_claim_overreach | 13 |
@@ -46,5 +46,5 @@ Generated at 2026-05-25T20:43:30.296Z.
 | therecord | 8 |
 | cyberscoop | 7 |
 | riskybiz | 4 |
-| darkreading | 3 |
+| darkreading | 2 |
 | krebs | 2 |
