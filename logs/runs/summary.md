@@ -1,14 +1,14 @@
 # Run summary — last 7 days
 
-Generated at 2026-05-25T20:26:41.571Z.
+Generated at 2026-05-25T20:43:30.296Z.
 
 ## Totals
 
 | Metric | Value |
 |---|---|
 | Runs | 131 |
-| Runs (ingest) | 61 |
-| Runs (process) | 70 |
+| Runs (ingest) | 60 |
+| Runs (process) | 71 |
 | Articles processed | 180 |
 | Articles published | 86 |
 | Total cost | $1.5943 |
