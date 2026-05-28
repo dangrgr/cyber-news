@@ -101,6 +101,27 @@ export function mapDeterministicKind(
   }
 }
 
+/** Shape a `DeterministicFailure` into a run-log detail object with snake_case
+ *  keys, matching the casing convention of every other NDJSON field. The typed
+ *  union (deterministic.ts) uses camelCase internally; logging it raw would be
+ *  the only place a run-log payload leaks an internal type's casing. Exhaustive
+ *  switch so a new failure kind forces a decision here rather than silently
+ *  re-introducing camelCase. */
+export function deterministicFailureDetail(
+  f: DeterministicFailure,
+): Record<string, unknown> {
+  switch (f.kind) {
+    case "invalid_cve":
+      return { kind: f.kind, cve: f.cve };
+    case "date_out_of_window":
+      return { kind: f.kind, incident_date: f.incidentDate, published_at: f.publishedAt };
+    case "entity_not_in_article":
+      return { kind: f.kind, entity: f.entity, entity_class: f.entityClass };
+    case "claim_language_overreach":
+      return { kind: f.kind, marker: f.marker, confidence: f.confidence };
+  }
+}
+
 export function mapReconcileReason(reason: string): FailureCode {
   if (reason === "factcheck_unsupported") return "factcheck_unsupported";
   if (reason.startsWith("reconcile_disagree:")) return "factcheck_reconcile_disagree";

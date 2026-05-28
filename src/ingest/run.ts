@@ -128,21 +128,6 @@ async function processSource(
       const stage = pre.passed ? "deduped" : "pre_filtered";
       const failureReason = pre.passed ? null : `prefilter_score=${pre.score} ${pre.reason}`;
 
-      // Records the extraction path + body size per ingested article. Makes the
-      // per-source rss_fallback rate and truncation signal queryable from the
-      // committed run log (PRD enhancement #1) before adding any scraper rules.
-      runLog.logEvent({
-        event: "article_ingested",
-        article_id: id,
-        source_id: source.id,
-        source_tier: source.tier,
-        extraction_method: resolved.method,
-        word_count: resolved.wordCount,
-        stage,
-        prefilter_score: pre.score,
-        prefilter_reason: pre.reason,
-      });
-
       await insertArticle(client, {
         id,
         sourceId: source.id,
@@ -154,6 +139,23 @@ async function processSource(
         rawText: body,
         stage,
         failureReason,
+      });
+
+      // Emitted only after the row is written, so the event can't claim an
+      // article was ingested that a failing insert never persisted. Records the
+      // extraction path + body size per article — makes the per-source
+      // rss_fallback rate and truncation signal queryable from the committed
+      // run log (PRD enhancement #1) before adding any scraper rules.
+      runLog.logEvent({
+        event: "article_ingested",
+        article_id: id,
+        source_id: source.id,
+        source_tier: source.tier,
+        extraction_method: resolved.method,
+        word_count: resolved.wordCount,
+        stage,
+        prefilter_score: pre.score,
+        prefilter_reason: pre.reason,
       });
 
       // Insert into the in-memory recent set so subsequent entries in the same run dedup against it.

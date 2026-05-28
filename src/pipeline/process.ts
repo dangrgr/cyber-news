@@ -36,6 +36,7 @@ import { resolveEntities } from "./entity_resolve.ts";
 import {
   failureCodeFromError,
   mapDeterministicKind,
+  deterministicFailureDetail,
   mapReconcileReason,
   mapTriageReasonCode,
   type FailureCode,
@@ -365,12 +366,13 @@ async function processOne(
       failure_code,
       failure_codes,
       failure_reason,
-      // Structured per-failure detail (incidentDate/publishedAt for date gate,
-      // entity/entityClass for entity gate, marker/confidence for claim gate).
+      // Structured per-failure detail (incident_date/published_at for date gate,
+      // entity/entity_class for entity gate, marker/confidence for claim gate).
       // The joined `failure_reason` only carries kinds — the detail is what
       // lets us judge whether a `date_out_of_window` reject was a genuinely
       // stale story or a vuln-advisory disclosure-date pick, without re-running.
-      failure_details: det.failures,
+      // Mapped to snake_case to match the run-log field convention.
+      failure_details: det.failures.map(deterministicFailureDetail),
     });
     return { kind: "factcheck_failed", stageCosts, failure_code, failure_codes, failure_reason };
   }
