@@ -365,6 +365,12 @@ async function processOne(
       failure_code,
       failure_codes,
       failure_reason,
+      // Structured per-failure detail (incidentDate/publishedAt for date gate,
+      // entity/entityClass for entity gate, marker/confidence for claim gate).
+      // The joined `failure_reason` only carries kinds — the detail is what
+      // lets us judge whether a `date_out_of_window` reject was a genuinely
+      // stale story or a vuln-advisory disclosure-date pick, without re-running.
+      failure_details: det.failures,
     });
     return { kind: "factcheck_failed", stageCosts, failure_code, failure_codes, failure_reason };
   }

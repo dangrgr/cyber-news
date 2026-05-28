@@ -14,7 +14,7 @@
 // No LLM stages run in Phase 1.
 
 import { SOURCES } from "./sources.ts";
-import { fetchFeed, extractArticleBody } from "./fetcher.ts";
+import { fetchFeed, resolveArticleBody } from "./fetcher.ts";
 import { canonicalizeUrl, articleId } from "./canonicalize.ts";
 import { findDuplicate } from "./dedup.ts";
 import { scorePrefilter } from "../pipeline/prefilter.ts";
@@ -116,7 +116,8 @@ async function processSource(
         continue;
       }
 
-      const body = (await extractArticleBody(entry.link)) ?? entry.rawText;
+      const resolved = await resolveArticleBody(entry.link, entry.rawText);
+      const body = resolved.text;
       const pre = scorePrefilter({
         title: entry.title,
         body,
@@ -126,6 +127,21 @@ async function processSource(
 
       const stage = pre.passed ? "deduped" : "pre_filtered";
       const failureReason = pre.passed ? null : `prefilter_score=${pre.score} ${pre.reason}`;
+
+      // Records the extraction path + body size per ingested article. Makes the
+      // per-source rss_fallback rate and truncation signal queryable from the
+      // committed run log (PRD enhancement #1) before adding any scraper rules.
+      runLog.logEvent({
+        event: "article_ingested",
+        article_id: id,
+        source_id: source.id,
+        source_tier: source.tier,
+        extraction_method: resolved.method,
+        word_count: resolved.wordCount,
+        stage,
+        prefilter_score: pre.score,
+        prefilter_reason: pre.reason,
+      });
 
       await insertArticle(client, {
         id,

@@ -56,6 +56,52 @@ export async function extractArticleBody(url: string): Promise<string | null> {
   }
 }
 
+/** Which path produced the stored article body. Readability is the intended
+ *  path; `rss_fallback` means full-text extraction failed (non-2xx, paywall,
+ *  parse error, or empty result) and we kept the RSS snippet. Surfacing this
+ *  makes the per-source fallback rate observable (PRD enhancement #1) — the
+ *  prerequisite diagnostic before any source-specific scraper rules. */
+export type ExtractionMethod = "readability" | "rss_fallback";
+
+export interface ResolvedBody {
+  text: string;
+  method: ExtractionMethod;
+  /** Word count of the resolved body, HTML tags stripped so a Readability
+   *  plain-text body and an HTML RSS snippet are measured comparably. A low
+   *  count on a `readability` body is a truncation/boilerplate signal. */
+  wordCount: number;
+}
+
+/** Count words after stripping HTML tags, so plain-text and HTML bodies compare. */
+export function bodyWordCount(text: string): number {
+  const stripped = text.replace(/<[^>]+>/g, " ");
+  const matches = stripped.trim().match(/\S+/g);
+  return matches ? matches.length : 0;
+}
+
+/**
+ * Resolve an article body, recording which extraction path produced it.
+ *
+ * `extractor` is injectable as a test seam (matches the DI style used for
+ * clocks / cveExists elsewhere); production callers use the default.
+ */
+export async function resolveArticleBody(
+  url: string,
+  rssFallback: string,
+  extractor: (u: string) => Promise<string | null> = extractArticleBody,
+): Promise<ResolvedBody> {
+  const readabilityText = await extractor(url);
+  if (readabilityText && readabilityText.length > 0) {
+    return {
+      text: readabilityText,
+      method: "readability",
+      wordCount: bodyWordCount(readabilityText),
+    };
+  }
+  const text = rssFallback ?? "";
+  return { text, method: "rss_fallback", wordCount: bodyWordCount(text) };
+}
+
 export async function fetchFeed(source: SourceFeed): Promise<RawEntry[]> {
   const feed = await rssParser.parseURL(source.url);
   const out: RawEntry[] = [];

@@ -846,6 +846,13 @@ describe("processPendingArticles: failure codes (PR 3)", () => {
     assert.equal(fcEvents[0]!.failure_code, "factcheck_date_out_of_window");
     assert.equal(fcEvents[0]!.stage_reached, "factcheck_deterministic");
     assert.deepEqual(fcEvents[0]!.failure_codes, ["factcheck_date_out_of_window"]);
+    // Structured detail must carry the actual dates, not just the kind, so the
+    // #2 failure (date_out_of_window) is debuggable from the log alone.
+    const details = fcEvents[0]!.failure_details as Array<Record<string, unknown>>;
+    assert.equal(details.length, 1);
+    assert.equal(details[0]!.kind, "date_out_of_window");
+    assert.equal(details[0]!.incidentDate, "2024-01-01");
+    assert.ok(typeof details[0]!.publishedAt === "string");
 
     const articleDones = events.filter((e) => e.event === "article_done");
     assert.equal(articleDones.length, 1);
