@@ -416,6 +416,12 @@ async function processOne(
       stage_reached: "factcheck_reconcile",
       failure_code,
       failure_reason,
+      // Same queryable key as the deterministic branch. `failure_reason` is the
+      // 200-char-truncated `reconcile_disagree:<fields>` string; this carries
+      // the full, untruncated list of fields that disagreed (or, for an
+      // unsupported fail, the flagged fields) so a many-field reject stays
+      // debuggable from the log alone.
+      failure_details: decision.disagreements,
       raw_model_output: fc.raw,
     });
     return { kind: "factcheck_failed", stageCosts, failure_code, failure_reason };

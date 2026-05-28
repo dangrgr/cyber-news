@@ -861,6 +861,100 @@ describe("processPendingArticles: failure codes (PR 3)", () => {
     assert.equal(articleDones[0]!.failure_code, "factcheck_date_out_of_window");
   });
 
+  it("reconcile disagree emits factcheck_failed with structured failure_details", async () => {
+    // The two extract passes disagree on a flagged field, so reconcile fails.
+    // The reconcile-branch factcheck_failed event must carry the untruncated
+    // disagreed-field list in `failure_details` — the same debuggability the
+    // deterministic branch gained — not just the joined `failure_reason`.
+    await seedArticle(db, { id: "art-reconcile-disagree" });
+
+    let extractCalls = 0;
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "process",
+          novel: true,
+          significant: true,
+          duplicate_of: null,
+          reason: "Named victim and actor.",
+          reason_code: null,
+        }),
+      extract: () => {
+        extractCalls++;
+        return JSON.stringify({
+          title: "T",
+          summary: "ShinyHunters breached an org.",
+          // Pass 1 gates on Cisco (present in raw_text); pass 2 returns a
+          // different victim, so the flagged field disagrees on re-run.
+          victim_orgs_confirmed: extractCalls === 1 ? ["Cisco"] : ["Acme Corp"],
+          orgs_mentioned: [],
+          threat_actors_attributed: ["ShinyHunters"],
+          actors_mentioned: [],
+          cves: [],
+          initial_access_vector: null,
+          ttps: [],
+          impact: {
+            affected_count: null,
+            affected_count_unit: null,
+            data_exfil_size: null,
+            sector: null,
+            geographic_scope: null,
+            service_disruption: null,
+          },
+          incident_date: null,
+          confidence: "reported",
+          claim_markers_observed: [],
+          primary_source: "article_itself",
+        });
+      },
+      // Flag victim_orgs_confirmed with OVERREACH to trigger the reconcile re-run.
+      factcheck: () =>
+        JSON.stringify({
+          overall: "fail",
+          issues: [
+            {
+              field: "victim_orgs_confirmed",
+              verdict: "OVERREACH",
+              article_evidence: null,
+              detail: "force reconcile",
+            },
+          ],
+        }),
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => {
+        events.push(e);
+      },
+      finishRun: async () => {},
+    };
+
+    await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord: recordingDiscord(),
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+
+    assert.ok(extractCalls >= 2, `expected reconcile to re-run extract; got ${extractCalls}`);
+    const fcEvents = events.filter((e) => e.event === "factcheck_failed");
+    assert.equal(fcEvents.length, 1);
+    assert.equal(fcEvents[0]!.failure_code, "factcheck_reconcile_disagree");
+    assert.equal(fcEvents[0]!.stage_reached, "factcheck_reconcile");
+    assert.deepEqual(fcEvents[0]!.failure_details, ["victim_orgs_confirmed"]);
+  });
+
   it("malformed JSON from a pattern emits pattern_parse_error and article_error with raw_model_output", async () => {
     await seedArticle(db, { id: "art-malformed" });
 

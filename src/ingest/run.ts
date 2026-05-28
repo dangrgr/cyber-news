@@ -13,8 +13,9 @@
 //
 // No LLM stages run in Phase 1.
 
-import { SOURCES } from "./sources.ts";
-import { fetchFeed, resolveArticleBody } from "./fetcher.ts";
+import type { Client } from "@libsql/client";
+import { SOURCES, type SourceFeed } from "./sources.ts";
+import { fetchFeed, resolveArticleBody, type RawEntry } from "./fetcher.ts";
 import { canonicalizeUrl, articleId } from "./canonicalize.ts";
 import { findDuplicate } from "./dedup.ts";
 import { scorePrefilter } from "../pipeline/prefilter.ts";
@@ -47,13 +48,26 @@ async function refreshEntityAliasCache(): Promise<string[]> {
   return loadAllAliases(client);
 }
 
-async function processSource(
+/** Injectable seams for `processSource`, defaulting to production. Mirrors the
+ *  DI style used elsewhere (extractor / clocks / cveExists) so the ingest loop
+ *  — including the `article_ingested` run-log event — is testable offline
+ *  without touching the network or the global Turso client. */
+export interface ProcessSourceDeps {
+  client?: Client;
+  fetchFeed?: (source: SourceFeed) => Promise<RawEntry[]>;
+  resolveBody?: typeof resolveArticleBody;
+}
+
+export async function processSource(
   sourceIndex: number,
   aliases: readonly string[],
   runLog: RunLogger,
+  deps: ProcessSourceDeps = {},
 ): Promise<RunStats> {
   const source = SOURCES[sourceIndex]!;
-  const client = getClient();
+  const client = deps.client ?? getClient();
+  const fetchFeedFn = deps.fetchFeed ?? fetchFeed;
+  const resolveBodyFn = deps.resolveBody ?? resolveArticleBody;
   const stats: RunStats = {
     source_id: source.id,
     fetched: 0,
@@ -65,7 +79,7 @@ async function processSource(
 
   let entries;
   try {
-    entries = await fetchFeed(source);
+    entries = await fetchFeedFn(source);
   } catch (err) {
     // Errors are logged with stage_reached per CLAUDE.md style; never silently swallowed.
     stats.errors.push({
@@ -116,7 +130,7 @@ async function processSource(
         continue;
       }
 
-      const resolved = await resolveArticleBody(entry.link, entry.rawText);
+      const resolved = await resolveBodyFn(entry.link, entry.rawText);
       const body = resolved.text;
       const pre = scorePrefilter({
         title: entry.title,
@@ -152,6 +166,9 @@ async function processSource(
         source_id: source.id,
         source_tier: source.tier,
         extraction_method: resolved.method,
+        // null on the readability path; the failure category (http_error /
+        // empty_extraction / fetch_error) when we fell back to the RSS snippet.
+        fallback_reason: resolved.fallbackReason,
         word_count: resolved.wordCount,
         stage,
         prefilter_score: pre.score,

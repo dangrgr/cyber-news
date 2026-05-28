@@ -116,7 +116,10 @@ export function deterministicFailureDetail(
     case "date_out_of_window":
       return { kind: f.kind, incident_date: f.incidentDate, published_at: f.publishedAt };
     case "entity_not_in_article":
-      return { kind: f.kind, entity: f.entity, entity_class: f.entityClass };
+      // `entity` is verbatim, uncapped article-derived text; cap it to match
+      // the 200-char `failure_reason` convention so a crafted source can't
+      // bloat the committed run log.
+      return { kind: f.kind, entity: f.entity.slice(0, 200), entity_class: f.entityClass };
     case "claim_language_overreach":
       return { kind: f.kind, marker: f.marker, confidence: f.confidence };
   }
