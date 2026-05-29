@@ -11,23 +11,26 @@ triggers.
 |---|---|---|---|---|
 | 1 | Publish quality | Non-title `pattern_schema_invalid` | pending-data | 2026-05-18, non-title schema-invalid event |
 | 2 | Dedup quality | Cross-source dedup architecture (settle window vs. outbound dedup) | pending-data | 2026-05-19, after #23 near-miss histograms + corroboration telemetry sanity check |
-| 3 | Dedup quality | Incident-id keying / corroboration starvation (#35) | pending-data | 2026-05-29, ≥1 same-incident pair with diverging `incident_created` keys |
+| 3 | Dedup quality | Incident-id keying / corroboration starvation (#35) | shipped-verify (PR #38) | 2026-06-05, ~7d post-merge: CVE-mode corroboration rises, `victim_mismatch` ≈ 0 |
 | 4 | Publish quality | Date-gate disclosure-date handling | pending-data | 2026-06-12, ≥20 `factcheck_date_out_of_window` events with `failure_details` |
 | 5 | Extraction coverage | Per-source scraper rules | pending-data | 2026-06-05 busy sources / 2026-06-26 long tail, per-source `rss_fallback` rate |
+| 6 | Dedup quality | CVE-keying wrong-split telemetry (PR #38 residual) | pending-data | 2026-06-05, same CVE on ≥2 incident_ids within 30d |
+| 7 | Dedup quality | CVE-keying structural over-merge (same-bucket distinct victims) | pending-data | 2026-06-05, `victim_mismatch` rate (see Item #3 verification) |
 
-**Project state: observation mode.** All items are pending data; no
-dispatch-ready items right now. #36 (2026-05-29) shipped two more
-visibility mechanisms — per-article extraction telemetry (`article_ingested`)
-and structured factcheck `failure_details` — opening Items #4 and #5 below;
-both are pure-instrument, measure-before-building, consistent with the
-standing thesis (every behavior change is gated on a logging read first).
-Items #1 and #2's trigger windows (2026-05-18 / -19) have opened and are due
-a data re-eval against current run logs. The corroboration telemetry sanity
-check (Item #2's blocker) was done 2026-05-22: it surfaced an instrumentation
-gap (fixed in #34) **and** a keying gap, split out as Item #3 / issue #35.
-Next dated triggers: **2026-05-29** (Item #3, opens today),
-**2026-06-05** (Item #5, busy-source scraper read),
-**2026-06-12** (Item #4, date-gate).
+**Project state: mostly observation mode, one behavior change in flight.**
+#36 (2026-05-29) shipped two visibility mechanisms — per-article extraction
+telemetry (`article_ingested`) and structured factcheck `failure_details` —
+opening Items #4 and #5. **#38 (CVE incident keying)** is the first *behavior*
+change in a while: it keys vuln-disclosure incidents on the CVE list + a
+30-day bucket to fix corroboration starvation (Item #3). It ships with its own
+over-merge telemetry (`victim_mismatch`), and per the standing thesis it is on
+a **verification clock**, not assumed-good — see Item #3 for the bars. Its two
+known residuals are split out as Items #6 (wrong-split telemetry) and #7
+(structural over-merge). Items #1 and #2's trigger windows (2026-05-18 / -19)
+remain due a data re-eval.
+Next dated triggers — all **2026-06-05** (~7d post-#38-merge): Item #3
+verification, Items #6/#7 residual reads, Item #5 busy-source scraper read;
+then **2026-06-12** (Item #4, date-gate) and **2026-06-26** (Item #5 long tail).
 
 If a candidate feed materializes for the `low_trust` tier (shipped in
 #26 as a facility), that's a one-line edit in `src/ingest/sources.ts`
@@ -223,35 +226,79 @@ At re-eval, answer with data:
 
 ## Item 3 — Incident-id keying (corroboration starvation)
 
-**Pending data.** Tracked as GitHub issue #35. This is the outcome of Item
-#2's corroboration telemetry sanity check (done 2026-05-22): cross-source
-corroboration almost never fires in production — not (only) because of the
-dead code path #32 fixed, but because the deterministic incident id rarely
-collides across sources, so `incident_corroborated` has nothing to fire on.
+**Shipped in PR #38 — on a verification clock (GH issue #35).** Root cause
+(7-day log read): `incidentKey()` fell back to `article.title` when
+`victim_orgs_confirmed` was empty, so every source's headline produced a unique
+`incident_id` for the same vuln disclosure → corroboration never fired
+(~90 `incident_created` : 1 `incident_corroborated` / 7d). Fix: when CVEs are
+present, key on the normalized CVE list + a 30-day date bucket
+(`cve:<cves>|b<bucket>`) instead of `date|victim|actor`. CVEs normalized via
+`normalizeCveId`; over-merge bounded in time by the bucket and surfaced by new
+telemetry (`victim_mismatch` / `existing_key_victim` on `incident_corroborated`).
 
-`incidentKey()` (`src/pipeline/process.ts`) hashes
-`incident_date | victim_orgs_confirmed[0] | threat_actors_attributed[0]`.
-For vuln disclosures there is no actor, so the key reduces to `date|victim`
-— fragile to "Cisco" vs "Cisco Secure Workload" or one-day date drift.
-Observed miss: securityweek + bleepingcomputer on the same Cisco Secure
-Workload flaw (shared CVE-2026-20223) → two single-source posts, no PATCH.
+**This is a behavior change, so it is not assumed-good — it must clear the
+verification bars below before Item #3 closes.** Metrics are in the committed
+NDJSON (`incident_created` + `incident_corroborated`); no dedicated MCP
+aggregator yet, so the read is `gh api repos/dangrgr/cyber-news/contents/
+logs/runs/...` + jq (or build the optional `runlog_incident_histogram`
+enabler, mirroring `runlog_dedup_histogram`).
 
-**Now debuggable.** #34 added the `incident_created` event logging
-`key_date`/`key_victim`/`key_actor` (the exact hash inputs) and put
-`incident_id` on the published `article_done`. Diagnose by grepping
-`incident_created` for same-victim pairs that landed on different ids.
+**Verification — 2026-06-05 (~7 days post-merge). Three reads, three bars:**
+1. **Efficacy (did it work?):** count `incident_corroborated` with
+   `corroborator_key_mode == "cve"` (≈0 before #38) and the 7-day
+   `created : corroborated` ratio. **Bar:** CVE-mode corroboration is firing and
+   the ratio is materially off ~90:1. If CVE corroboration stays ~0 → fix is
+   inert (CVEs not extracted / mis-normalized) → investigate.
+2. **Over-merge (is it harming? → Item #7):** count `incident_corroborated`
+   with `victim_mismatch == true`. **Bar:** ≈0. **≥2/week, or any one
+   spot-checked case that is a genuinely distinct breach, → revisit (Item #7).**
+   Even a single real absorption counts — it is silent Discord data loss.
+3. **Wrong-split (incompletely fixed? → Item #6):** group `incident_created`
+   by each CVE in `key_cves`; find CVEs landing on ≥2 distinct `incident_id`
+   within 30 days. **Bar:** **≥3 same-CVE split pairs/week, or the PR's named
+   clusters (Gogs/Drupal/FortiClient/Cisco SW/LaravelLang) still splitting, →
+   build Item #6 telemetry then fix.**
 
-**Re-evaluation trigger:** first week (earliest **2026-05-29**, ~7 days of
-post-#34 cron data) where committed logs show **≥1 same-incident pair with
-diverging `incident_created` keys**. Until then, no spec — the key_* values
-have to tell us which normalization to apply (victim canonicalization via
-`entities.yaml` / CVE-in-key / date bucket / fuzzy fallback).
+**Relationship to Item #2:** distinct mechanism (process-time keying vs.
+ingest-time `titleRatio`), both serve one-post-per-story. The structural
+over-merge fix (#7) shares Item #2's multi-field match scorer, so sequence #7
+after the Item #2 architecture decision.
 
-**Relationship to Item #2:** distinct mechanism (process-time incident
-keying vs. ingest-time `titleRatio`), but both serve one-post-per-story.
-Fixing the key is lower-LoE and may catch some misses before the dedup
-architecture question arises; its data is flowing now, so sequence #35
-ahead of Item #2.
+## Item 6 — CVE-keying wrong-split telemetry (PR #38 residual)
+
+**Pending data.** #38 instruments the *over-merge* direction (`victim_mismatch`)
+but **not** the *wrong-split* direction. Three split paths re-introduce
+starvation and are currently silent — each produces two ordinary
+`incident_created` events indistinguishable from genuinely-distinct incidents:
+- (a) **mode-namespace split:** one source extracts the CVE (`cve:` key), another
+  misses it (`date|victim|actor` key) for the same story → different namespaces,
+  never collapse.
+- (b) **bucket-edge straddle:** a disclosure cluster spanning a fixed 30-day
+  grid boundary (`floor(epochDay/30)`) splits.
+- (c) **date-disagreement straddle:** sources disagree on `incident_date` across
+  a bucket edge (CVE mode keys on only cves + bucket, so this splits).
+
+**Re-evaluation trigger:** 2026-06-05, off Item #3 read #3 above. **If the
+wrong-split rate clears the bar**, build a near-collision detector: on insert,
+look up recent incidents sharing any CVE within a window and emit an
+`incident_split_suspected` event (the shared key field that lets a query join
+near-misses, which today's events lack). Diagnostic before behavior, as usual.
+
+## Item 7 — CVE-keying structural over-merge (same-bucket distinct victims)
+
+**Pending data.** #38 bounds CVE-mode merge in *time* (30-day bucket) but not by
+*victim*: two genuinely distinct breaches citing the same CVE within one bucket
+collapse into one incident (the 2nd is PATCHed, not posted). Documented +
+characterization-tested as the known residual; flagged at runtime by
+`victim_mismatch`, not prevented. Realistic during mass-exploitation campaigns
+(MOVEit / Citrix Bleed cited across many victims in <30d).
+
+**Re-evaluation trigger:** 2026-06-05, off Item #3 read #2 (`victim_mismatch`
+rate / spot-check). **If over the bar**, fix options (let the mismatch sample
+pick): add the confirmed victim to the CVE key when present (`cve+victim`,
+empty-victim disclosures still collapse), or a windowed CVE→incident lookup with
+victim disambiguation. The latter overlaps Item #2's outbound-dedup scorer —
+sequence after the Item #2 decision to avoid building the matcher twice.
 
 ---
 
