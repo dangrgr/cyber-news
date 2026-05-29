@@ -4,6 +4,13 @@ dist/
 .env
 .env.local
 
+# Bun lockfiles. The project standardizes on npm (package-lock.json is the
+# source of truth; every CI workflow runs `npm ci`). Bun is only an acceptable
+# local runtime — ignore its lockfiles so a local `bun install` doesn't commit
+# a second, drift-prone lockfile that nothing consumes.
+bun.lock
+bun.lockb
+
 # logs/runs/ is intentionally NOT ignored — per-run NDJSON + INDEX.ndjson are
 # committed (see docs/observability-plan.md). The `*.log` rule above only
 # matches `.log` files, so `.ndjson` files under logs/runs/ are tracked.
