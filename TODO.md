@@ -12,14 +12,22 @@ triggers.
 | 1 | Publish quality | Non-title `pattern_schema_invalid` | pending-data | 2026-05-18, non-title schema-invalid event |
 | 2 | Dedup quality | Cross-source dedup architecture (settle window vs. outbound dedup) | pending-data | 2026-05-19, after #23 near-miss histograms + corroboration telemetry sanity check |
 | 3 | Dedup quality | Incident-id keying / corroboration starvation (#35) | pending-data | 2026-05-29, ≥1 same-incident pair with diverging `incident_created` keys |
+| 4 | Publish quality | Date-gate disclosure-date handling | pending-data | 2026-06-12, ≥20 `factcheck_date_out_of_window` events with `failure_details` |
+| 5 | Extraction coverage | Per-source scraper rules | pending-data | 2026-06-05 busy sources / 2026-06-26 long tail, per-source `rss_fallback` rate |
 
 **Project state: observation mode.** All items are pending data; no
-dispatch-ready items right now. Items #1 and #2's trigger windows
-(2026-05-18 / -19) have opened and are due a data re-eval against current
-run logs. The corroboration telemetry sanity check (Item #2's blocker) was
-done 2026-05-22: it surfaced an instrumentation gap (fixed in #34) **and**
-a keying gap, split out as Item #3 / issue #35. Next dated trigger:
-**2026-05-29** (Item #3).
+dispatch-ready items right now. #36 (2026-05-29) shipped two more
+visibility mechanisms — per-article extraction telemetry (`article_ingested`)
+and structured factcheck `failure_details` — opening Items #4 and #5 below;
+both are pure-instrument, measure-before-building, consistent with the
+standing thesis (every behavior change is gated on a logging read first).
+Items #1 and #2's trigger windows (2026-05-18 / -19) have opened and are due
+a data re-eval against current run logs. The corroboration telemetry sanity
+check (Item #2's blocker) was done 2026-05-22: it surfaced an instrumentation
+gap (fixed in #34) **and** a keying gap, split out as Item #3 / issue #35.
+Next dated triggers: **2026-05-29** (Item #3, opens today),
+**2026-06-05** (Item #5, busy-source scraper read),
+**2026-06-12** (Item #4, date-gate).
 
 If a candidate feed materializes for the `low_trust` tier (shipped in
 #26 as a facility), that's a one-line edit in `src/ingest/sources.ts`
@@ -49,6 +57,53 @@ no spec — the field has to tell us.
 When triggered, the decision per offending field mirrors #20: nullable
 in schema (legitimate gap) vs. pipeline fallback (value available
 elsewhere). Don't pre-design — let the field tell us.
+
+## Item 4 — Date-gate disclosure-date handling
+
+**Pending data.** `factcheck_date_out_of_window` is the #2 factcheck
+failure (~11/wk pre-#36). The deterministic gate rejects when
+`incident_date` falls outside `[publishedAt-90d, publishedAt+7d]`
+(`src/factcheck/deterministic.ts`). Hypothesis: a non-trivial slice of
+these are vuln advisories citing an older *disclosure* date, not genuinely
+stale reruns — i.e., the gate is over-rejecting good articles. Untestable
+pre-#36: the event carried only
+`{failure_reason:"deterministic:date_out_of_window", has_dates:false}` —
+no dates to judge by.
+
+**Now debuggable (#36).** `factcheck_failed` events at
+`stage_reached:"factcheck_deterministic"` carry
+`failure_details:[{kind:"date_out_of_window", incident_date, published_at}]`.
+
+**Cold-resume recipe (new session):**
+1. `runlog_query_failures` filtered to `factcheck_date_out_of_window`
+   over the window since 2026-05-29 — or, if the MCP isn't reachable,
+   `gh api repos/dangrgr/cyber-news/contents/logs/runs/...` + jq on
+   `event=="factcheck_failed" and failure_code=="factcheck_date_out_of_window"`.
+2. For each: compare `failure_details[].incident_date` vs `published_at`,
+   pull the article via `runlog_get_article_trace`, and label
+   **stale** (incident_date ≪ published_at, old news resurfaced) vs
+   **disclosure-date** (advisory; incident_date is the CVE/vendor
+   disclosure date, legitimately older than publish).
+3. Tally the split.
+
+**Re-evaluation trigger:** earliest **2026-06-12**, once ≥20
+`factcheck_date_out_of_window` events with `failure_details` are committed
+(~2 wks at 11/wk; wait for 30–40 if the split is close to the threshold).
+
+**Decision rules at re-eval:**
+- Overwhelmingly stale → gate is correct, **close, no change**.
+- A meaningful fraction (≥~25%) are disclosure-date picks → loosen
+  *narrowly*. Do **not** widen the window globally (re-admits stale
+  news). Prefer a predicate keyed on what the mislabeled sample shares —
+  likely: when extraction has `cves[]` and/or an advisory-like
+  `primary_source`, allow `incident_date` to predate the lower bound
+  (treat as disclosure date) while keeping the +7d future bound. Spec the
+  exact predicate from the sample, not from this note.
+- Per CLAUDE.md: change pass/fail behavior only *after* this logging read.
+  This item **is** that read; the behavior PR (one fixture) is the sequel.
+
+**Relationship:** independent of Items #1/#2/#3 (different gate; pure
+analysis → at most a small `deterministic.ts` predicate + fixture).
 
 ---
 
@@ -200,8 +255,86 @@ ahead of Item #2.
 
 ---
 
+# Goal 3 — Extraction coverage & fidelity
+
+Maximize the share of articles the pipeline reasons over with *full body
+text* rather than the truncated RSS snippet. A snippet-only body starves
+triage/extract/factcheck of evidence (under-cited summaries, missed
+entities, weaker dedup). The Readability→RSS fallback was silent until
+#36; the per-source fallback rate and a truncation signal are now logged.
+
+## Item 5 — Per-source scraper rules
+
+**Pending data.** `extractArticleBodyDetailed` (`src/ingest/fetcher.ts`)
+falls back to the RSS snippet on non-2xx / paywall / empty parse / fetch
+error. Per-source rate was invisible pre-#36. Target:
+`docs/possible-enhancements.md §1` — add source-specific extraction
+handling *only* where the data justifies it.
+
+**Now observable (#36).** Every persisted article emits an
+`article_ingested` event with `extraction_method`
+(`readability`|`rss_fallback`), `fallback_reason`
+(`http_error`|`empty_extraction`|`fetch_error`|null), `word_count`
+(tag-stripped), `source_id`, `source_tier`. Two signals: (a) per-source
+fallback rate + dominant reason; (b) a low `word_count` on a `readability`
+body = truncation/boilerplate (extraction "succeeded" but yielded little).
+
+**Cold-resume recipe (new session):**
+1. There is **no dedicated MCP aggregator** for `article_ingested` yet
+   (cf. `runlog_dedup_histogram`). Either (a) `gh api
+   repos/dangrgr/cyber-news/contents/logs/runs/...` + jq: group
+   `event=="article_ingested"` by `source_id`, compute the `rss_fallback`
+   share and `fallback_reason` breakdown; or (b) **first** ship the small
+   `runlog_extraction_histogram` tool (see enabling follow-up) and query
+   that. Per-run streams are available via `runlog_get_run`.
+2. Flag `readability` bodies with `word_count` below ~the per-source 10th
+   percentile as truncation suspects.
+
+**Re-evaluation trigger:**
+- Busy sources: earliest **2026-06-05** (~7 days) — any `source_id` with
+  ≥30 `article_ingested` events.
+- Long tail (low-volume advisories/vendors): **2026-06-26** for ≥30
+  samples each.
+
+**Decision rules at re-eval:**
+- Rank sources by `rss_fallback` rate × ingest volume (impact-weighted).
+  Only sources that are both high-fallback *and* high-volume justify a
+  custom rule; a quiet source that always falls back barely costs us.
+- By dominant `fallback_reason`:
+  - `http_error` (403/paywall) → custom headers/cookie, or accept the
+    snippet for that source.
+  - `empty_extraction` → Readability tuning / per-source content selector;
+    highest value (page fetched fine, parser missed the body).
+  - `fetch_error` (timeout/DNS) → per-host retry/backoff or raised timeout.
+- A low-`word_count` `readability` cluster on one source → per-source
+  selector even if it isn't formally "falling back."
+- If no source clears the impact bar → **close, no rules**; the snippet is
+  acceptable for a personal tool and the instrument stays on for drift.
+
+**Enabling follow-up (optional; do first if Item 5 needs >1 look):**
+`runlog_extraction_histogram` MCP tool — per-source `article_ingested`
+aggregation (count, fallback rate, `fallback_reason` breakdown,
+`word_count` percentiles). Mirrors #23's `runlog_dedup_histogram` in
+`scripts/mcp_run_log.ts`. Small; pays for itself across repeated reads.
+
+---
+
 # Recently shipped
 
+- **#36** (`9e4605f`, 2026-05-29) — Extraction + date-gate visibility.
+  (a) `article_ingested` event per persisted row
+  (`extraction_method`/`fallback_reason`/`word_count`/`source_id`/
+  `source_tier`) — makes the silent Readability→RSS fallback rate
+  observable (opens Item #5). (b) `failure_details` on `factcheck_failed`:
+  typed per-failure detail incl. `incident_date`/`published_at` for the
+  date gate and the disagreed-field list on reconcile fails (opens Item
+  #4; reconcile parity added in review). One intentional behavior change:
+  empty/whitespace extraction now falls back to the RSS snippet instead of
+  persisting an empty body (single source of truth in
+  `extractArticleBodyDetailed`). Hardening from review: `bodyWordCount`
+  strips only real tags + treats `&nbsp;` as a boundary; `entity` capped
+  200c; JSDOM input capped 2 MB. Added an injectable `processSource` seam
+  for offline `article_ingested` coverage. 346 tests pass.
 - **#34** (`a1f9a5d`, 2026-05-22) — Incident run-log visibility. `incident_id`
   on the published `article_done`; new `incident_created` event logging the
   hash inputs (`key_date`/`key_victim`/`key_actor`). Pure observability; id
@@ -258,6 +391,11 @@ ahead of Item #2.
   Ars for crypto, etc.) — declined for now. Needs taxonomy; bad
   value/effort for a personal tool. Revisit if `low_trust` tier proves
   the simple version is genuinely insufficient.
+- **Raw extraction error messages** — capture the caught
+  `extractArticleBodyDetailed` error text (not just the `fetch_error`
+  category) on `article_ingested`. Deferred in #36 to avoid per-article
+  log noise / PII; revisit only if a source's `fetch_error` clustering
+  needs the specific cause (Item #5).
 - **Issues vs. TODO.md** — declined to migrate. TODO.md stays canonical
   for backlog; issues only if a stable external URL is needed (rare
   for this project).
