@@ -1707,6 +1707,108 @@ describe("processPendingArticles: CVE-mode corroboration", () => {
     // New telemetry: the corroborator's own key is logged so an over-merge is queryable.
     assert.equal(corroborated[0]!.corroborator_key_mode, "cve");
   });
+
+  it("same-bucket distinct victims sharing a CVE merge (known residual) and flag victim_mismatch", async () => {
+    // Characterization test: CVE mode keys on cve+bucket and ignores victim, so
+    // two genuinely DIFFERENT victims citing the same CVE within one 30-day
+    // bucket collapse into one incident. This is the deliberate residual — the
+    // point of this test is that it is (a) a conscious, documented behavior and
+    // (b) detectable from the log via the victim_mismatch flag, not silent.
+    const cve = "CVE-2030-77777";
+    await seedArticle(db, {
+      id: "art-boeing",
+      sourceId: "securityweek",
+      url: "https://www.securityweek.com/boeing-sb",
+      canonicalUrl: "https://www.securityweek.com/boeing-sb",
+      title: "Boeing breach report",
+      publishedAt: "2026-03-15T10:00:00Z",
+      rawText: `Boeing was breached via ${cve} in a targeted intrusion.`,
+    });
+    await seedArticle(db, {
+      id: "art-icbc",
+      sourceId: "bleepingcomputer",
+      url: "https://www.bleepingcomputer.com/icbc-sb",
+      canonicalUrl: "https://www.bleepingcomputer.com/icbc-sb",
+      title: "ICBC incident disclosed",
+      publishedAt: "2026-03-16T10:00:00Z",
+      rawText: `ICBC confirmed compromise through ${cve} days later.`,
+    });
+
+    const nullImpact = {
+      affected_count: null,
+      affected_count_unit: null,
+      data_exfil_size: null,
+      sector: null,
+      geographic_scope: null,
+      service_disruption: null,
+    };
+    const makeExtraction = (victim: string) =>
+      JSON.stringify({
+        title: null,
+        summary: `A breach involving ${victim}.`,
+        victim_orgs_confirmed: [victim],
+        orgs_mentioned: [],
+        threat_actors_attributed: [],
+        actors_mentioned: [],
+        cves: [cve],
+        initial_access_vector: null,
+        ttps: [],
+        impact: nullImpact,
+        incident_date: "2026-03-15", // same 30-day bucket for both
+        confidence: "reported",
+        claim_markers_observed: [],
+        primary_source: "article_itself",
+      });
+
+    let idx = 0;
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "process",
+          novel: true,
+          significant: true,
+          duplicate_of: null,
+          reason: "Critical CVE exploited.",
+          reason_code: null,
+        }),
+      extract: () => (++idx === 1 ? makeExtraction("Boeing") : makeExtraction("ICBC")),
+      factcheck: () => JSON.stringify({ overall: "pass", issues: [] }),
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => events.push(e),
+      finishRun: async () => {},
+    };
+
+    const discord = recordingDiscord();
+    await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord,
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+
+    // Documented residual: they merge (one post, one corroboration PATCH).
+    assert.equal(discord.posts.length, 1);
+    assert.equal(discord.patches.length, 1);
+    // But the merge is NOT silent — the corroboration event flags the conflict.
+    const corroborated = events.filter((e) => e.event === "incident_corroborated");
+    assert.equal(corroborated.length, 1);
+    assert.equal(corroborated[0]!.victim_mismatch, true);
+    assert.equal(corroborated[0]!.existing_key_victim, "boeing");
+    assert.equal(corroborated[0]!.corroborator_key_victim, "icbc");
+  });
 });
 
 describe("processPendingArticles: incident_id visibility", () => {

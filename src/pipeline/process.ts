@@ -43,7 +43,7 @@ import {
 } from "./failure_codes.ts";
 
 import { runDeterministic } from "../factcheck/deterministic.ts";
-import { cveExists, type CveCacheDeps } from "../factcheck/cve_cache.ts";
+import { cveExists, normalizeCveId, type CveCacheDeps } from "../factcheck/cve_cache.ts";
 import { reconcile } from "../factcheck/reconcile.ts";
 
 import { composeEmbed } from "../discord/embed.ts";
@@ -490,19 +490,28 @@ async function resolveIncidentId(
       const corroborationCountAfter = alreadyPresent
         ? existing.corroboration_count
         : existing.source_urls.length + 1;
+      // Over-merge signal: in CVE mode the id ignores victim, so a corroboration
+      // can be a genuinely-different victim wrongly absorbed. Flag only when
+      // BOTH sides have a *confirmed* victim that disagrees — the title-fallback
+      // victim differs across sources even for a correct merge, so comparing
+      // that would false-positive on exactly the disclosure case we want to keep.
+      const existingVictim = existing.victim_orgs_confirmed[0]?.toLowerCase().trim() ?? null;
+      const corroboratorVictim = extraction.victim_orgs_confirmed[0]?.toLowerCase().trim() ?? null;
       deps.runLog.logEvent({
         event: "incident_corroborated",
         incident_id: newId,
         corroborator_article_id: article.id,
         corroborator_source_id: article.source_id,
         corroborator_source_tier: sourceTier,
-        // The corroborator's own key fields. In CVE mode the id ignores victim,
-        // so logging the corroborator's victim/mode here is what makes a wrong
-        // over-merge (a CVE incident absorbing a genuinely different victim)
-        // queryable after ship — otherwise the absorption is silent.
+        // The corroborator's key fields AND the existing incident's confirmed
+        // victim, so a wrong over-merge is a one-query detection (no cross-event
+        // join back to incident_created) and surfaces via `victim_mismatch`.
         corroborator_key_mode: key.mode,
-        corroborator_key_victim: key.victim,
-        corroborator_cves: key.cves,
+        corroborator_key_victim: capStr(key.victim),
+        corroborator_cves: key.cves.slice(0, MAX_LOG_CVES),
+        existing_key_victim: existingVictim ? capStr(existingVictim) : null,
+        victim_mismatch:
+          existingVictim !== null && corroboratorVictim !== null && existingVictim !== corroboratorVictim,
         time_since_first_publish_ms: Date.now() - Date.parse(existing.first_seen_at),
         corroboration_count_after: corroborationCountAfter,
       });
@@ -536,11 +545,11 @@ async function resolveIncidentId(
     article_id: article.id,
     source_id: article.source_id,
     key_mode: key.mode,
-    key_cves: key.cves,
+    key_cves: key.cves.slice(0, MAX_LOG_CVES),
     key_bucket: key.bucket,
     key_date: key.date,
-    key_victim: key.victim,
-    key_actor: key.actor,
+    key_victim: capStr(key.victim),
+    key_actor: capStr(key.actor),
   });
   return newId;
 }
@@ -576,6 +585,12 @@ interface IncidentKey {
 // key_cves/key_bucket fields, and the trigger to revisit if it shows up.
 const CVE_KEY_BUCKET_DAYS = 30;
 
+// Cap untrusted, LLM-extracted strings written to the run log, matching the
+// 200-char convention used for triage/factcheck reasons elsewhere in this file.
+const MAX_LOG_STR = 200;
+const MAX_LOG_CVES = 20;
+const capStr = (s: string): string => s.slice(0, MAX_LOG_STR);
+
 function cveDateBucket(dateIso: string): number {
   const ms = Date.parse(dateIso);
   const day = Number.isNaN(ms) ? 0 : Math.floor(ms / 86_400_000);
@@ -583,8 +598,16 @@ function cveDateBucket(dateIso: string): number {
 }
 
 function incidentKey(article: ArticleRow, extraction: ExtractionOutput): IncidentKey {
+  // Reuse the validated normalizer (UPPER+trim, `^CVE-\d{4}-\d{4,}$`) rather
+  // than an ad-hoc transform, so a non-CVE string in `cves` can't become a
+  // merge key. Malformed entries drop out; if none remain, key falls to
+  // incident mode.
   const cves = [
-    ...new Set((extraction.cves ?? []).map((c) => c.toUpperCase().trim()).filter(Boolean)),
+    ...new Set(
+      (extraction.cves ?? [])
+        .map((c) => normalizeCveId(c))
+        .filter((c): c is string => c !== null),
+    ),
   ].sort();
   const date = extraction.incident_date ?? article.published_at.slice(0, 10);
   return {
