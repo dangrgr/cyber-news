@@ -1505,6 +1505,208 @@ describe("processPendingArticles: CVE-mode corroboration", () => {
     assert.equal(corroborated.length, 1);
     assert.equal(corroborated[0]!.incident_id, incidentId);
   });
+
+  it("two distinct breaches sharing a CVE in different date buckets stay separate", async () => {
+    // Over-merge guard: a reused, long-lived CVE cited by two genuinely distinct
+    // breaches weeks apart must NOT collapse. The CVE-mode key is bounded by a
+    // 30-day date bucket precisely so this can't silently absorb a new victim.
+    const cve = "CVE-2030-12345";
+    await seedArticle(db, {
+      id: "art-jan",
+      sourceId: "securityweek",
+      url: "https://www.securityweek.com/boeing-cve",
+      canonicalUrl: "https://www.securityweek.com/boeing-cve",
+      title: "Boeing breached via known flaw",
+      publishedAt: "2026-01-10T10:00:00Z",
+      rawText: `Attackers exploited ${cve} to breach Boeing in January.`,
+    });
+    await seedArticle(db, {
+      id: "art-apr",
+      sourceId: "bleepingcomputer",
+      url: "https://www.bleepingcomputer.com/icbc-cve",
+      canonicalUrl: "https://www.bleepingcomputer.com/icbc-cve",
+      title: "ICBC hit through the same vulnerability",
+      publishedAt: "2026-04-10T10:00:00Z",
+      rawText: `ICBC was compromised through ${cve} three months later.`,
+    });
+
+    const nullImpact = {
+      affected_count: null,
+      affected_count_unit: null,
+      data_exfil_size: null,
+      sector: null,
+      geographic_scope: null,
+      service_disruption: null,
+    };
+    const makeExtraction = (victim: string, date: string) =>
+      JSON.stringify({
+        title: null,
+        summary: `A distinct breach involving ${victim}.`,
+        victim_orgs_confirmed: [victim],
+        orgs_mentioned: [],
+        threat_actors_attributed: [],
+        actors_mentioned: [],
+        cves: [cve],
+        initial_access_vector: null,
+        ttps: [],
+        impact: nullImpact,
+        incident_date: date,
+        confidence: "reported",
+        claim_markers_observed: [],
+        primary_source: "article_itself",
+      });
+
+    let idx = 0;
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "process",
+          novel: true,
+          significant: true,
+          duplicate_of: null,
+          reason: "Critical CVE exploited.",
+          reason_code: null,
+        }),
+      // Processed published_at ASC: Boeing (Jan) first, ICBC (Apr) second.
+      extract: () =>
+        ++idx === 1 ? makeExtraction("Boeing", "2026-01-10") : makeExtraction("ICBC", "2026-04-10"),
+      factcheck: () => JSON.stringify({ overall: "pass", issues: [] }),
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => events.push(e),
+      finishRun: async () => {},
+    };
+
+    const discord = recordingDiscord();
+    const summary = await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord,
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+
+    assert.equal(summary.published, 2);
+    assert.equal(discord.posts.length, 2, "distinct breaches → two posts, not a false merge");
+    assert.equal(discord.patches.length, 0, "no false corroboration across buckets");
+
+    const created = events.filter((e) => e.event === "incident_created");
+    assert.equal(created.length, 2);
+    assert.ok(created.every((e) => e.key_mode === "cve"));
+    assert.notEqual(created[0]!.key_bucket, created[1]!.key_bucket, "different 30-day buckets");
+    assert.equal(events.filter((e) => e.event === "incident_corroborated").length, 0);
+  });
+
+  it("CVE case variance across sources still collapses (normalized key)", async () => {
+    // Sources write the CVE token with different casing; UPPER+trim normalization
+    // must keep them on one incident or the starvation bug silently returns.
+    const rawText = "A critical unauthenticated RCE tracked as CVE-2030-55555 affects the product.";
+    await seedArticle(db, {
+      id: "art-upper",
+      sourceId: "securityweek",
+      url: "https://www.securityweek.com/cve-upper",
+      canonicalUrl: "https://www.securityweek.com/cve-upper",
+      title: "Vendor patches critical RCE",
+      publishedAt: "2026-03-01T10:00:00Z",
+      rawText,
+    });
+    await seedArticle(db, {
+      id: "art-lower",
+      sourceId: "bleepingcomputer",
+      url: "https://www.bleepingcomputer.com/cve-lower",
+      canonicalUrl: "https://www.bleepingcomputer.com/cve-lower",
+      title: "Critical RCE disclosed in product",
+      publishedAt: "2026-03-02T10:00:00Z",
+      rawText,
+    });
+
+    const nullImpact = {
+      affected_count: null,
+      affected_count_unit: null,
+      data_exfil_size: null,
+      sector: null,
+      geographic_scope: null,
+      service_disruption: null,
+    };
+    const makeExtraction = (cve: string) =>
+      JSON.stringify({
+        title: null,
+        summary: "A critical unauthenticated RCE disclosure.",
+        victim_orgs_confirmed: [],
+        orgs_mentioned: [],
+        threat_actors_attributed: [],
+        actors_mentioned: [],
+        cves: [cve],
+        initial_access_vector: null,
+        ttps: [],
+        impact: nullImpact,
+        incident_date: "2026-03-01",
+        confidence: "reported",
+        claim_markers_observed: [],
+        primary_source: "cited_vendor_advisory",
+      });
+
+    let idx = 0;
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "process",
+          novel: true,
+          significant: true,
+          duplicate_of: null,
+          reason: "Critical CVE.",
+          reason_code: null,
+        }),
+      // Same CVE, different casing across the two sources.
+      extract: () => (++idx === 1 ? makeExtraction("CVE-2030-55555") : makeExtraction("cve-2030-55555")),
+      factcheck: () => JSON.stringify({ overall: "pass", issues: [] }),
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => events.push(e),
+      finishRun: async () => {},
+    };
+
+    const discord = recordingDiscord();
+    await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord,
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+
+    assert.equal(discord.posts.length, 1, "case variance must not split the incident");
+    assert.equal(discord.patches.length, 1);
+    const created = events.filter((e) => e.event === "incident_created");
+    assert.equal(created.length, 1);
+    assert.deepEqual(created[0]!.key_cves, ["CVE-2030-55555"], "CVE normalized to canonical form");
+    const corroborated = events.filter((e) => e.event === "incident_corroborated");
+    assert.equal(corroborated.length, 1);
+    // New telemetry: the corroborator's own key is logged so an over-merge is queryable.
+    assert.equal(corroborated[0]!.corroborator_key_mode, "cve");
+  });
 });
 
 describe("processPendingArticles: incident_id visibility", () => {

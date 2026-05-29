@@ -496,6 +496,13 @@ async function resolveIncidentId(
         corroborator_article_id: article.id,
         corroborator_source_id: article.source_id,
         corroborator_source_tier: sourceTier,
+        // The corroborator's own key fields. In CVE mode the id ignores victim,
+        // so logging the corroborator's victim/mode here is what makes a wrong
+        // over-merge (a CVE incident absorbing a genuinely different victim)
+        // queryable after ship — otherwise the absorption is silent.
+        corroborator_key_mode: key.mode,
+        corroborator_key_victim: key.victim,
+        corroborator_cves: key.cves,
         time_since_first_publish_ms: Date.now() - Date.parse(existing.first_seen_at),
         corroboration_count_after: corroborationCountAfter,
       });
@@ -528,8 +535,9 @@ async function resolveIncidentId(
     incident_id: newId,
     article_id: article.id,
     source_id: article.source_id,
-    key_mode: key.cves.length > 0 ? "cve" : "incident",
+    key_mode: key.mode,
     key_cves: key.cves,
+    key_bucket: key.bucket,
     key_date: key.date,
     key_victim: key.victim,
     key_actor: key.actor,
@@ -541,32 +549,59 @@ async function resolveIncidentId(
  *  `incident_created` run-log event can record exactly what produced the id —
  *  letting an audit see *why* two cross-source articles did or didn't collapse.
  *
- *  When `cves` is non-empty the id is derived from the CVE list alone (CVE mode),
- *  making it source-independent for vulnerability disclosures where
- *  victim_orgs_confirmed is typically empty and every source writes a different
- *  headline (which the fallback would otherwise use, guaranteeing a unique id
- *  per source and starving corroboration). */
+ *  When `cves` is non-empty the id is derived from the CVE list **plus a coarse
+ *  date bucket** (CVE mode), making it source-independent for vulnerability
+ *  disclosures (where victim_orgs_confirmed is typically empty and every source
+ *  writes a different headline — the fallback would otherwise produce a unique
+ *  id per source and starve corroboration). The date bucket bounds the merge in
+ *  time: a popular, long-lived CVE (Log4Shell, MOVEit, Citrix Bleed) cited by a
+ *  genuinely distinct breach weeks later lands in a different bucket and stays a
+ *  separate incident, so CVE-mode can't silently absorb unrelated victims. CVEs
+ *  are normalized (UPPER + trim + dedup) so casing/whitespace variance across
+ *  sources doesn't re-split — the same discipline already applied to victim/actor. */
 interface IncidentKey {
-  cves: string[];  // sorted; non-empty → CVE mode, empty → incident mode
+  cves: string[];  // normalized + sorted; non-empty → CVE mode, empty → incident mode
+  bucket: number | null;  // CVE-mode date bucket; null in incident mode
   date: string;
   victim: string;
   actor: string;
+  mode: "cve" | "incident";
+}
+
+// Width of the CVE-mode date bucket. Tracks the ingest dedup lookback
+// (DEDUP_LOOKBACK_DAYS = 30): same disclosure cluster (sources within days)
+// shares a bucket and corroborates; a reused CVE on a distinct breach a month+
+// later falls in a new bucket. Boundary-straddling clusters (rare; a 2-day
+// spread across a bucket edge) re-split — detectable via the `incident_created`
+// key_cves/key_bucket fields, and the trigger to revisit if it shows up.
+const CVE_KEY_BUCKET_DAYS = 30;
+
+function cveDateBucket(dateIso: string): number {
+  const ms = Date.parse(dateIso);
+  const day = Number.isNaN(ms) ? 0 : Math.floor(ms / 86_400_000);
+  return Math.floor(day / CVE_KEY_BUCKET_DAYS);
 }
 
 function incidentKey(article: ArticleRow, extraction: ExtractionOutput): IncidentKey {
+  const cves = [
+    ...new Set((extraction.cves ?? []).map((c) => c.toUpperCase().trim()).filter(Boolean)),
+  ].sort();
+  const date = extraction.incident_date ?? article.published_at.slice(0, 10);
   return {
-    cves: [...(extraction.cves ?? [])].sort(),
-    date: extraction.incident_date ?? article.published_at.slice(0, 10),
+    cves,
+    bucket: cves.length > 0 ? cveDateBucket(date) : null,
+    date,
     victim: (extraction.victim_orgs_confirmed[0] ?? article.title).toLowerCase().trim(),
     actor: (extraction.threat_actors_attributed[0] ?? "").toLowerCase().trim(),
+    mode: cves.length > 0 ? "cve" : "incident",
   };
 }
 
 /** Deterministic id so two processors hitting the same article produce the same incident id. */
 function incidentIdFromKey(key: IncidentKey): string {
   // "cve:" prefix prevents hash collisions between CVE-mode and incident-mode keys.
-  const joined = key.cves.length > 0
-    ? `cve:${key.cves.join(",")}`
+  const joined = key.mode === "cve"
+    ? `cve:${key.cves.join(",")}|b${key.bucket}`
     : [key.date, key.victim, key.actor].join("|");
   return "inc-" + createHash("sha256").update(joined).digest("hex").slice(0, 16);
 }
