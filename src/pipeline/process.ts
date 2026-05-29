@@ -528,6 +528,8 @@ async function resolveIncidentId(
     incident_id: newId,
     article_id: article.id,
     source_id: article.source_id,
+    key_mode: key.cves.length > 0 ? "cve" : "incident",
+    key_cves: key.cves,
     key_date: key.date,
     key_victim: key.victim,
     key_actor: key.actor,
@@ -537,8 +539,15 @@ async function resolveIncidentId(
 
 /** The components the deterministic incident id is hashed from. Exposed so the
  *  `incident_created` run-log event can record exactly what produced the id —
- *  letting an audit see *why* two cross-source articles did or didn't collapse. */
+ *  letting an audit see *why* two cross-source articles did or didn't collapse.
+ *
+ *  When `cves` is non-empty the id is derived from the CVE list alone (CVE mode),
+ *  making it source-independent for vulnerability disclosures where
+ *  victim_orgs_confirmed is typically empty and every source writes a different
+ *  headline (which the fallback would otherwise use, guaranteeing a unique id
+ *  per source and starving corroboration). */
 interface IncidentKey {
+  cves: string[];  // sorted; non-empty → CVE mode, empty → incident mode
   date: string;
   victim: string;
   actor: string;
@@ -546,6 +555,7 @@ interface IncidentKey {
 
 function incidentKey(article: ArticleRow, extraction: ExtractionOutput): IncidentKey {
   return {
+    cves: [...(extraction.cves ?? [])].sort(),
     date: extraction.incident_date ?? article.published_at.slice(0, 10),
     victim: (extraction.victim_orgs_confirmed[0] ?? article.title).toLowerCase().trim(),
     actor: (extraction.threat_actors_attributed[0] ?? "").toLowerCase().trim(),
@@ -554,7 +564,10 @@ function incidentKey(article: ArticleRow, extraction: ExtractionOutput): Inciden
 
 /** Deterministic id so two processors hitting the same article produce the same incident id. */
 function incidentIdFromKey(key: IncidentKey): string {
-  const joined = [key.date, key.victim, key.actor].join("|");
+  // "cve:" prefix prevents hash collisions between CVE-mode and incident-mode keys.
+  const joined = key.cves.length > 0
+    ? `cve:${key.cves.join(",")}`
+    : [key.date, key.victim, key.actor].join("|");
   return "inc-" + createHash("sha256").update(joined).digest("hex").slice(0, 16);
 }
 

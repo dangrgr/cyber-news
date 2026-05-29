@@ -1382,6 +1382,131 @@ describe("processPendingArticles: corroboration", () => {
   });
 });
 
+describe("processPendingArticles: CVE-mode corroboration", () => {
+  it("two sources on the same CVE collapse to one incident_id despite different victim text", async () => {
+    // Regression fixture for the corroboration-starvation bug: vuln disclosure
+    // stories have no victim_orgs_confirmed, so incidentKey() used to fall back to
+    // the article title, producing a unique id per source. Keying on the shared CVE
+    // number fixes this.
+    const cveRawText =
+      "Cisco has patched CVE-2026-20223, a critical unauthenticated RCE flaw in the " +
+      "Cisco Secure Workload REST API rated CVSS 10.0. Cisco confirmed the vulnerability " +
+      "and recommends immediate update to the fixed release.";
+    await seedArticle(db, {
+      id: "art-sw",
+      sourceId: "securityweek",
+      url: "https://www.securityweek.com/cisco-secure-workload-cvss10",
+      canonicalUrl: "https://www.securityweek.com/cisco-secure-workload-cvss10",
+      title: "Cisco patches critical Secure Workload flaw",
+      publishedAt: "2026-05-22T10:00:00Z",
+      rawText: cveRawText,
+    });
+    await seedArticle(db, {
+      id: "art-bleep-cve",
+      sourceId: "bleepingcomputer",
+      url: "https://www.bleepingcomputer.com/news/security/cisco-workload-bug",
+      canonicalUrl: "https://www.bleepingcomputer.com/news/security/cisco-workload-bug",
+      title: "Critical Cisco Secure Workload bug — CVSS 10.0",
+      publishedAt: "2026-05-21T14:00:00Z",
+      rawText: cveRawText,
+    });
+
+    const makeExtraction = (victimOrgs: string[]) =>
+      JSON.stringify({
+        title: null,
+        summary: "A critical unauthenticated RCE in Cisco Secure Workload REST API.",
+        victim_orgs_confirmed: victimOrgs,
+        orgs_mentioned: ["Cisco"],
+        threat_actors_attributed: [],
+        actors_mentioned: [],
+        cves: ["CVE-2026-20223"],
+        initial_access_vector: null,
+        ttps: [],
+        impact: {
+          affected_count: null,
+          affected_count_unit: null,
+          data_exfil_size: null,
+          sector: null,
+          geographic_scope: null,
+          service_disruption: null,
+        },
+        incident_date: "2026-05-22",
+        confidence: "reported",
+        claim_markers_observed: [],
+        primary_source: "cited_vendor_advisory",
+      });
+
+    let callIdx = 0;
+    const anthropic = routedAnthropic({
+      triage: () =>
+        JSON.stringify({
+          decision: "process",
+          novel: true,
+          significant: true,
+          duplicate_of: null,
+          reason: "Critical CVE.",
+          reason_code: null,
+        }),
+      // First article has victim_orgs_confirmed populated; second has none.
+      // The old keying would produce different incident IDs; CVE mode must not.
+      extract: () => {
+        callIdx++;
+        return makeExtraction(callIdx === 1 ? ["Cisco"] : []);
+      },
+      factcheck: () => JSON.stringify({ overall: "pass", issues: [] }),
+    });
+
+    const events: Array<Record<string, unknown>> = [];
+    const runLog: RunLogger = {
+      runId: "test-run",
+      stage: "process",
+      logCall: () => {},
+      logEvent: (e) => events.push(e),
+      finishRun: async () => {},
+    };
+
+    const discord = recordingDiscord();
+    const summary = await processPendingArticles({
+      db,
+      anthropic: anthropic.client,
+      discord,
+      brave: emptyBrave,
+      cveCache: { client: db, nvd: alwaysExistsNvd },
+      env: {
+        MODEL_TRIAGE: "claude-haiku-4-5",
+        MODEL_EXTRACTION: "claude-haiku-4-5",
+        MODEL_FACTCHECK: "claude-haiku-4-5",
+      },
+      runLog,
+    });
+
+    assert.equal(summary.published, 2, "both articles should reach published stage");
+    assert.equal(discord.posts.length, 1, "first article posts a new Discord message");
+    assert.equal(discord.patches.length, 1, "second article corroborates via PATCH, not a new post");
+
+    // Both articles attached to the same CVE-keyed incident.
+    const articles = await db.execute({
+      sql: `SELECT id, incident_id FROM articles WHERE id IN (?, ?)`,
+      args: ["art-sw", "art-bleep-cve"],
+    });
+    const incidentIds = new Set(articles.rows.map((r) => String(r.incident_id)));
+    assert.equal(incidentIds.size, 1, "both articles share one incident_id (CVE mode)");
+    const incidentId = [...incidentIds][0]!;
+
+    // Exactly one incident_created (CVE mode) and one incident_corroborated.
+    const created = events.filter((e) => e.event === "incident_created");
+    assert.equal(created.length, 1);
+    const createdEv = created[0]!;
+    assert.equal(createdEv.incident_id, incidentId);
+    assert.equal(createdEv.key_mode, "cve");
+    assert.deepEqual(createdEv.key_cves, ["CVE-2026-20223"]);
+
+    const corroborated = events.filter((e) => e.event === "incident_corroborated");
+    assert.equal(corroborated.length, 1);
+    assert.equal(corroborated[0]!.incident_id, incidentId);
+  });
+});
+
 describe("processPendingArticles: incident_id visibility", () => {
   it("published article_done carries incident_id and incident_created logs the key components", async () => {
     const artId = await seedArticle(db, { id: "art-vis" });
@@ -1473,6 +1598,9 @@ describe("processPendingArticles: incident_id visibility", () => {
     assert.equal(ev.incident_id, incidentId);
     assert.equal(ev.article_id, artId);
     assert.equal(ev.source_id, "krebs");
+    // No CVEs → incident mode; date/victim/actor fields drive the key.
+    assert.equal(ev.key_mode, "incident");
+    assert.deepEqual(ev.key_cves, []);
     assert.equal(ev.key_date, "2026-04-20");
     assert.equal(ev.key_victim, "cisco");
     assert.equal(ev.key_actor, "shinyhunters");
