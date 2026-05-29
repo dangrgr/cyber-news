@@ -43,7 +43,7 @@ import {
 } from "./failure_codes.ts";
 
 import { runDeterministic } from "../factcheck/deterministic.ts";
-import { cveExists, type CveCacheDeps } from "../factcheck/cve_cache.ts";
+import { cveExists, normalizeCveId, type CveCacheDeps } from "../factcheck/cve_cache.ts";
 import { reconcile } from "../factcheck/reconcile.ts";
 
 import { composeEmbed } from "../discord/embed.ts";
@@ -490,12 +490,28 @@ async function resolveIncidentId(
       const corroborationCountAfter = alreadyPresent
         ? existing.corroboration_count
         : existing.source_urls.length + 1;
+      // Over-merge signal: in CVE mode the id ignores victim, so a corroboration
+      // can be a genuinely-different victim wrongly absorbed. Flag only when
+      // BOTH sides have a *confirmed* victim that disagrees — the title-fallback
+      // victim differs across sources even for a correct merge, so comparing
+      // that would false-positive on exactly the disclosure case we want to keep.
+      const existingVictim = existing.victim_orgs_confirmed[0]?.toLowerCase().trim() ?? null;
+      const corroboratorVictim = extraction.victim_orgs_confirmed[0]?.toLowerCase().trim() ?? null;
       deps.runLog.logEvent({
         event: "incident_corroborated",
         incident_id: newId,
         corroborator_article_id: article.id,
         corroborator_source_id: article.source_id,
         corroborator_source_tier: sourceTier,
+        // The corroborator's key fields AND the existing incident's confirmed
+        // victim, so a wrong over-merge is a one-query detection (no cross-event
+        // join back to incident_created) and surfaces via `victim_mismatch`.
+        corroborator_key_mode: key.mode,
+        corroborator_key_victim: capStr(key.victim),
+        corroborator_cves: key.cves.slice(0, MAX_LOG_CVES),
+        existing_key_victim: existingVictim ? capStr(existingVictim) : null,
+        victim_mismatch:
+          existingVictim !== null && corroboratorVictim !== null && existingVictim !== corroboratorVictim,
         time_since_first_publish_ms: Date.now() - Date.parse(existing.first_seen_at),
         corroboration_count_after: corroborationCountAfter,
       });
@@ -528,33 +544,88 @@ async function resolveIncidentId(
     incident_id: newId,
     article_id: article.id,
     source_id: article.source_id,
+    key_mode: key.mode,
+    key_cves: key.cves.slice(0, MAX_LOG_CVES),
+    key_bucket: key.bucket,
     key_date: key.date,
-    key_victim: key.victim,
-    key_actor: key.actor,
+    key_victim: capStr(key.victim),
+    key_actor: capStr(key.actor),
   });
   return newId;
 }
 
 /** The components the deterministic incident id is hashed from. Exposed so the
  *  `incident_created` run-log event can record exactly what produced the id —
- *  letting an audit see *why* two cross-source articles did or didn't collapse. */
+ *  letting an audit see *why* two cross-source articles did or didn't collapse.
+ *
+ *  When `cves` is non-empty the id is derived from the CVE list **plus a coarse
+ *  date bucket** (CVE mode), making it source-independent for vulnerability
+ *  disclosures (where victim_orgs_confirmed is typically empty and every source
+ *  writes a different headline — the fallback would otherwise produce a unique
+ *  id per source and starve corroboration). The date bucket bounds the merge in
+ *  time: a popular, long-lived CVE (Log4Shell, MOVEit, Citrix Bleed) cited by a
+ *  genuinely distinct breach weeks later lands in a different bucket and stays a
+ *  separate incident, so CVE-mode can't silently absorb unrelated victims. CVEs
+ *  are normalized (UPPER + trim + dedup) so casing/whitespace variance across
+ *  sources doesn't re-split — the same discipline already applied to victim/actor. */
 interface IncidentKey {
+  cves: string[];  // normalized + sorted; non-empty → CVE mode, empty → incident mode
+  bucket: number | null;  // CVE-mode date bucket; null in incident mode
   date: string;
   victim: string;
   actor: string;
+  mode: "cve" | "incident";
+}
+
+// Width of the CVE-mode date bucket. Tracks the ingest dedup lookback
+// (DEDUP_LOOKBACK_DAYS = 30): same disclosure cluster (sources within days)
+// shares a bucket and corroborates; a reused CVE on a distinct breach a month+
+// later falls in a new bucket. Boundary-straddling clusters (rare; a 2-day
+// spread across a bucket edge) re-split — detectable via the `incident_created`
+// key_cves/key_bucket fields, and the trigger to revisit if it shows up.
+const CVE_KEY_BUCKET_DAYS = 30;
+
+// Cap untrusted, LLM-extracted strings written to the run log, matching the
+// 200-char convention used for triage/factcheck reasons elsewhere in this file.
+const MAX_LOG_STR = 200;
+const MAX_LOG_CVES = 20;
+const capStr = (s: string): string => s.slice(0, MAX_LOG_STR);
+
+function cveDateBucket(dateIso: string): number {
+  const ms = Date.parse(dateIso);
+  const day = Number.isNaN(ms) ? 0 : Math.floor(ms / 86_400_000);
+  return Math.floor(day / CVE_KEY_BUCKET_DAYS);
 }
 
 function incidentKey(article: ArticleRow, extraction: ExtractionOutput): IncidentKey {
+  // Reuse the validated normalizer (UPPER+trim, `^CVE-\d{4}-\d{4,}$`) rather
+  // than an ad-hoc transform, so a non-CVE string in `cves` can't become a
+  // merge key. Malformed entries drop out; if none remain, key falls to
+  // incident mode.
+  const cves = [
+    ...new Set(
+      (extraction.cves ?? [])
+        .map((c) => normalizeCveId(c))
+        .filter((c): c is string => c !== null),
+    ),
+  ].sort();
+  const date = extraction.incident_date ?? article.published_at.slice(0, 10);
   return {
-    date: extraction.incident_date ?? article.published_at.slice(0, 10),
+    cves,
+    bucket: cves.length > 0 ? cveDateBucket(date) : null,
+    date,
     victim: (extraction.victim_orgs_confirmed[0] ?? article.title).toLowerCase().trim(),
     actor: (extraction.threat_actors_attributed[0] ?? "").toLowerCase().trim(),
+    mode: cves.length > 0 ? "cve" : "incident",
   };
 }
 
 /** Deterministic id so two processors hitting the same article produce the same incident id. */
 function incidentIdFromKey(key: IncidentKey): string {
-  const joined = [key.date, key.victim, key.actor].join("|");
+  // "cve:" prefix prevents hash collisions between CVE-mode and incident-mode keys.
+  const joined = key.mode === "cve"
+    ? `cve:${key.cves.join(",")}|b${key.bucket}`
+    : [key.date, key.victim, key.actor].join("|");
   return "inc-" + createHash("sha256").update(joined).digest("hex").slice(0, 16);
 }
 
