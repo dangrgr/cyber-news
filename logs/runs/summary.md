@@ -1,26 +1,26 @@
 # Run summary — last 7 days
 
-Generated at 2026-06-01T02:03:16.440Z.
+Generated at 2026-06-01T07:17:23.760Z.
 
 ## Totals
 
 | Metric | Value |
 |---|---|
-| Runs | 116 |
+| Runs | 115 |
 | Runs (ingest) | 63 |
-| Runs (process) | 53 |
-| Articles processed | 108 |
+| Runs (process) | 52 |
+| Articles processed | 107 |
 | Articles published | 54 |
-| Total cost | $1.0736 |
+| Total cost | $1.0350 |
 
 ## Per-stage cost rollup
 
 | Stage | Calls | Input tokens | Output tokens | Cost |
 |---|---:|---:|---:|---:|
-| triage | 108 | 109084 | 15640 | $0.1873 |
-| extract | 131 | 259354 | 74823 | $0.6335 |
-| factcheck | 60 | 133643 | 23844 | $0.2529 |
-| total | 299 | 502081 | 114307 | $1.0736 |
+| triage | 107 | 108069 | 15498 | $0.1856 |
+| extract | 129 | 247098 | 72054 | $0.6074 |
+| factcheck | 59 | 126758 | 23061 | $0.2421 |
+| total | 295 | 481925 | 110613 | $1.0350 |
 
 ## Failure breakdown
 
@@ -29,7 +29,7 @@ Generated at 2026-06-01T02:03:16.440Z.
 | triage_vendor_marketing | 19 |
 | factcheck_date_out_of_window | 13 |
 | triage_not_an_incident | 11 |
-| factcheck_reconcile_disagree | 6 |
+| factcheck_reconcile_disagree | 5 |
 | factcheck_claim_overreach | 2 |
 | factcheck_entity_not_in_article | 2 |
 | triage_speculation | 1 |
@@ -44,5 +44,4 @@ Generated at 2026-06-01T02:03:16.440Z.
 | csoonline | 9 |
 | darkreading | 3 |
 | cyberscoop | 2 |
-| riskybiz | 1 |
 | therecord | 1 |
