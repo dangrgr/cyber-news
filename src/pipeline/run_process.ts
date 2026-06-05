@@ -3,7 +3,7 @@
 // directly and inject fakes — this entry point is only ever invoked by a
 // cron-triggered GH Actions step.
 
-import { getClient } from "../turso/client.ts";
+import { getClient, initializeDatabase } from "../turso/client.ts";
 import { createAnthropicClient } from "../clients/anthropic.ts";
 import { createDiscordClient } from "../clients/discord.ts";
 import { createBraveClient } from "../clients/brave.ts";
@@ -20,6 +20,7 @@ async function main(): Promise<void> {
   const log = startRun("process");
 
   const db = getClient();
+  await initializeDatabase(db);
   const anthropic = createAnthropicClient();
   const discord = createDiscordClient({ webhookUrl: webhook, runLog: log });
   const brave = createBraveClient();

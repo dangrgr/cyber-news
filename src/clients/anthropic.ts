@@ -4,6 +4,29 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 
+export interface AnthropicAuthOptions {
+  apiKey: string | null;
+  authToken: string | null;
+}
+
+export function resolveAnthropicAuthOptions(env: NodeJS.ProcessEnv = process.env): AnthropicAuthOptions {
+  const authMode = env.LLM_AUTH_MODE?.toLowerCase();
+  const apiKey = env.ANTHROPIC_API_KEY ?? null;
+  const authToken = env.ANTHROPIC_AUTH_TOKEN ?? null;
+
+  if (authMode === "oauth") {
+    if (!authToken) {
+      throw new Error("ANTHROPIC_AUTH_TOKEN is required when LLM_AUTH_MODE=oauth");
+    }
+    if (apiKey) {
+      throw new Error("ANTHROPIC_API_KEY must be unset when LLM_AUTH_MODE=oauth");
+    }
+    return { apiKey: null, authToken };
+  }
+
+  return { apiKey, authToken };
+}
+
 export interface MessagesCreateParams {
   model: string;
   system: string;
@@ -23,7 +46,8 @@ export interface AnthropicClient {
 }
 
 export function createAnthropicClient(apiKey?: string): AnthropicClient {
-  const sdk = new Anthropic({ apiKey: apiKey ?? process.env.ANTHROPIC_API_KEY });
+  const auth = apiKey !== undefined ? { apiKey, authToken: null } : resolveAnthropicAuthOptions();
+  const sdk = new Anthropic(auth);
   return {
     async messagesCreate(params) {
       const res = await sdk.messages.create({

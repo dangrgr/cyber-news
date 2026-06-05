@@ -15,6 +15,10 @@
     "investigate": "node --import tsx/esm src/investigate/run.ts",
     "stats": "node --import tsx/esm scripts/stats.ts",
     "migrate": "node --import tsx/esm scripts/migrate.ts",
+    "local:run": "bash scripts/local_run.sh",
+    "local:ingest": "bash scripts/local_run.sh ingest",
+    "local:process": "bash scripts/local_run.sh process",
+    "local:backup": "node --import tsx/esm scripts/backup_sqlite.ts",
     "test": "node --import tsx/esm --test \"tests/**/*.test.ts\""
   },
   "dependencies": {
