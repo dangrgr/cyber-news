@@ -17,8 +17,11 @@ mkdir -p "$APP_HOME" "$APP_HOME/etc" "$APP_HOME/state" "$APP_HOME/logs" "$APP_HO
 chmod 700 "$APP_HOME" "$APP_HOME/etc" "$APP_HOME/state" "$APP_HOME/logs" "$APP_HOME/locks" "$APP_HOME/backups" "$APP_HOME/run" "$WRAPPER_LOG_DIR"
 
 if [[ -f "$ENV_FILE" ]]; then
+  # Export app-local env-file assignments so npm/node children see them.
+  set -a
   # shellcheck disable=SC1090
   source "$ENV_FILE"
+  set +a
 fi
 
 export CYBER_NEWS_APP_HOME="$APP_HOME"

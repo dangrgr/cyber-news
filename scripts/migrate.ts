@@ -8,7 +8,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Client } from "@libsql/client";
 
-import { getClient, initializeDatabase } from "../src/turso/client.ts";
+import { closeClient, getClient, initializeDatabase } from "../src/turso/client.ts";
 
 const TRACKING_TABLE_DDL = `
   CREATE TABLE IF NOT EXISTS _migrations (
@@ -92,14 +92,18 @@ export function parseStatements(sql: string): string[] {
 
 async function main(): Promise<void> {
   const client = getClient();
-  await initializeDatabase(client);
-  const results = await runMigrations(client);
-  if (results.length === 0) {
-    console.log(JSON.stringify({ migrate: "noop", reason: "no_sql_files" }));
-    return;
-  }
-  for (const r of results) {
-    console.log(JSON.stringify({ migrate: r.action, file: r.file, statements: r.statements }));
+  try {
+    await initializeDatabase(client);
+    const results = await runMigrations(client);
+    if (results.length === 0) {
+      console.log(JSON.stringify({ migrate: "noop", reason: "no_sql_files" }));
+      return;
+    }
+    for (const r of results) {
+      console.log(JSON.stringify({ migrate: r.action, file: r.file, statements: r.statements }));
+    }
+  } finally {
+    closeClient();
   }
 }
 
@@ -107,6 +111,7 @@ async function main(): Promise<void> {
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
     console.error(JSON.stringify({ migrate: "fatal", error: err instanceof Error ? err.message : String(err) }));
+    closeClient();
     process.exit(1);
   });
 }

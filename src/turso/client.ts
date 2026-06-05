@@ -30,6 +30,12 @@ export async function initializeDatabase(client: Client = getClient(), url = get
   initialized = true;
 }
 
+export function closeClient(): void {
+  cached?.close();
+  cached = null;
+  initialized = false;
+}
+
 export async function configureLocalSqlite(client: Client, url: string): Promise<void> {
   if (!isFileBackedSqliteUrl(url)) return;
 

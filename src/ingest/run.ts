@@ -19,7 +19,7 @@ import { fetchFeed, resolveArticleBody, type RawEntry } from "./fetcher.ts";
 import { canonicalizeUrl, articleId } from "./canonicalize.ts";
 import { findDuplicate } from "./dedup.ts";
 import { scorePrefilter } from "../pipeline/prefilter.ts";
-import { getClient, initializeDatabase } from "../turso/client.ts";
+import { closeClient, getClient, initializeDatabase } from "../turso/client.ts";
 import {
   insertArticle,
   recentArticlesForDedup,
@@ -226,11 +226,13 @@ if (isMain) {
       );
       await log.finishRun({ per_source: stats, totals: summary });
       console.log(JSON.stringify({ run: "ingest", per_source: stats, totals: summary }, null, 2));
+      closeClient();
     })
     .catch(async (err) => {
       const message = err instanceof Error ? err.message : String(err);
       await log.finishRun({ error: message });
       console.error(JSON.stringify({ run: "ingest", fatal: message }));
+      closeClient();
       process.exit(1);
     });
 }
