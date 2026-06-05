@@ -19,6 +19,7 @@
     "local:ingest": "bash scripts/local_run.sh ingest",
     "local:process": "bash scripts/local_run.sh process",
     "local:backup": "node --import tsx/esm scripts/backup_sqlite.ts",
+    "seed:local": "node --import tsx/esm scripts/seed_local_from_turso.ts",
     "test": "node --import tsx/esm --test \"tests/**/*.test.ts\""
   },
   "dependencies": {
