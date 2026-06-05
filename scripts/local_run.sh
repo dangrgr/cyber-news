@@ -37,10 +37,6 @@ if [[ "$stage" == "process" ]]; then
       echo "ANTHROPIC_API_KEY must be unset for local oauth process runtime" >&2
       exit 78
     fi
-    if [[ -z "${ANTHROPIC_AUTH_TOKEN:-}" && -n "${CLAUDE_CONFIG_DIR:-}" && -x "$(command -v claude || true)" ]]; then
-      # Best-effort refresh of Claude Code's local OAuth credential before the SDK reads it.
-      claude auth status --text >/dev/null
-    fi
     if [[ -z "${ANTHROPIC_AUTH_TOKEN:-}" && -z "${CLAUDE_CONFIG_DIR:-}" ]]; then
       echo "ANTHROPIC_AUTH_TOKEN or CLAUDE_CONFIG_DIR is required for local oauth process runtime" >&2
       exit 78
@@ -54,6 +50,51 @@ if [[ ! -d "$REPO" ]]; then
 fi
 
 log_file="$WRAPPER_LOG_DIR/${stage}-$(date -u +%Y%m%dT%H%M%SZ).log"
+
+claude_token_needs_refresh() {
+  python3 - "$CLAUDE_CONFIG_DIR" <<'PY'
+import json
+import sys
+import time
+from pathlib import Path
+
+config_dir = Path(sys.argv[1])
+credentials = config_dir / ".credentials.json"
+try:
+    oauth = json.loads(credentials.read_text(encoding="utf-8")).get("claudeAiOauth") or {}
+except Exception:
+    raise SystemExit(0)
+
+access_token = oauth.get("accessToken")
+expires_at = oauth.get("expiresAt")
+if not access_token or not isinstance(expires_at, (int, float)):
+    raise SystemExit(0)
+
+refresh_buffer_ms = 10 * 60 * 1000
+now_ms = int(time.time() * 1000)
+raise SystemExit(0 if expires_at <= now_ms + refresh_buffer_ms else 1)
+PY
+}
+
+refresh_claude_oauth_if_needed() {
+  if [[ -n "${ANTHROPIC_AUTH_TOKEN:-}" || -z "${CLAUDE_CONFIG_DIR:-}" ]]; then
+    return 0
+  fi
+  if ! command -v claude >/dev/null 2>&1; then
+    return 0
+  fi
+  if claude_token_needs_refresh; then
+    printf '%s refreshing Claude Code OAuth token before local process runtime\n' "$(date -Is)"
+    printf 'Return OK only.\n' | timeout "${CLAUDE_OAUTH_REFRESH_TIMEOUT_SECONDS:-120}" \
+      claude -p --max-turns 1 \
+      --disallowedTools Read,Grep,Glob,LS,Bash,Edit,Write,MultiEdit,Task,WebFetch,WebSearch \
+      >/dev/null
+  fi
+}
+
+if [[ "$stage" == "process" && "${LLM_AUTH_MODE:-}" == "oauth" ]]; then
+  refresh_claude_oauth_if_needed
+fi
 
 (
   flock -n 9 || { echo "another cyber-news local pipeline is already running" >&2; exit 75; }
