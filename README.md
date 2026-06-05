@@ -10,9 +10,8 @@ shaped it. Hand-maintained entity knowledge base in
 
 **Phase 3 — investigation workflow.** PRD §14.
 
-- Phase 1 (ingest + dedup + pre-filter) runs every 30 min via `.github/workflows/ingest.yml`.
-- Phase 2 (triage + extract + factcheck + Discord publish) runs at :15 and :45 past the
-  hour via `.github/workflows/process.yml`, offset 15 minutes from ingest.
+- Phase 1 (ingest + dedup + pre-filter) runs every 30 min via local runtime; the old GitHub Actions workflow is manual/disabled during migration.
+- Phase 2 (triage + extract + factcheck + Discord publish) runs offset from ingest via local runtime; the old GitHub Actions workflow is manual/disabled during migration.
 - Phase 3 (on-demand investigation) runs via `.github/workflows/investigate.yml` on
   `workflow_dispatch` with an `incident_id` input. Posts a Discord thread in
   `#cyber-investigations` with the full markdown report and evidence attachments.
@@ -73,6 +72,49 @@ DISCORD_WEBHOOK_NEWS=https://discord.com/api/webhooks/... \
 npm test
 npm run typecheck
 ```
+
+## Local resident runtime
+
+Production-local runtime is rooted outside the git checkout:
+
+```text
+/home/dan/apps/cyber-news/
+  etc/cyber-news.env
+  state/cyber-news.db
+  backups/
+  locks/
+  logs/
+  run/
+```
+
+Minimal `/home/dan/apps/cyber-news/etc/cyber-news.env` shape:
+
+```bash
+TURSO_DATABASE_URL=file:/home/dan/apps/cyber-news/state/cyber-news.db
+TURSO_AUTH_TOKEN=
+RUN_LOG_DIR=/home/dan/apps/cyber-news/logs
+LLM_AUTH_MODE=oauth
+CLAUDE_CONFIG_DIR=/home/dan/.claude
+# Optional override; normally omitted so the SDK reads Claude Code's current access token from $CLAUDE_CONFIG_DIR/.credentials.json.
+# ANTHROPIC_AUTH_TOKEN=***
+# ANTHROPIC_API_KEY must be unset when LLM_AUTH_MODE=oauth
+DISCORD_WEBHOOK_NEWS=https://discord.com/api/webhooks/...
+MODEL_TRIAGE=claude-haiku-4-5
+MODEL_EXTRACTION=claude-haiku-4-5
+MODEL_FACTCHECK=claude-haiku-4-5
+BRAVE_API_KEY=...
+NVD_API_KEY=...
+```
+
+Wrapper commands:
+
+```bash
+npm run local:ingest   # shared flock, migrate, ingest, silent on success
+npm run local:process  # shared flock, migrate, process, silent on success
+bash scripts/local_run.sh backup
+```
+
+`RUN_LOG_DIR` relocates run NDJSON/INDEX files outside the repo. File-backed SQLite is initialized with WAL, `busy_timeout=5000`, and `synchronous=NORMAL`.
 
 ## Secrets
 

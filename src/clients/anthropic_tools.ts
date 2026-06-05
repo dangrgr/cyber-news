@@ -8,6 +8,7 @@
 // real SDK's wider surface.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { resolveAnthropicAuthOptions } from "./anthropic.ts";
 
 export interface ToolUseBlock {
   type: "tool_use";
@@ -77,7 +78,8 @@ export interface MessagesWithToolsClient {
 }
 
 export function createMessagesWithToolsClient(apiKey?: string): MessagesWithToolsClient {
-  const sdk = new Anthropic({ apiKey: apiKey ?? process.env.ANTHROPIC_API_KEY });
+  const auth = apiKey !== undefined ? { apiKey, authToken: null } : resolveAnthropicAuthOptions();
+  const sdk = new Anthropic(auth);
   return {
     async create(params) {
       const res = await sdk.messages.create({

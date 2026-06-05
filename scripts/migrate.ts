@@ -8,7 +8,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Client } from "@libsql/client";
 
-import { getClient } from "../src/turso/client.ts";
+import { getClient, initializeDatabase } from "../src/turso/client.ts";
 
 const TRACKING_TABLE_DDL = `
   CREATE TABLE IF NOT EXISTS _migrations (
@@ -92,6 +92,7 @@ export function parseStatements(sql: string): string[] {
 
 async function main(): Promise<void> {
   const client = getClient();
+  await initializeDatabase(client);
   const results = await runMigrations(client);
   if (results.length === 0) {
     console.log(JSON.stringify({ migrate: "noop", reason: "no_sql_files" }));

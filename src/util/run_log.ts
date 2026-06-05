@@ -64,13 +64,18 @@ export function startRun(stage: string, options: StartRunOptions = {}): RunLogge
   if (env.RUN_LOG_DISABLED === "1") return NOOP_LOGGER;
 
   const root = options.root ?? process.cwd();
+  const hasCustomLogRoot = env.RUN_LOG_DIR !== undefined && env.RUN_LOG_DIR.length > 0;
+  const logRoot = hasCustomLogRoot ? env.RUN_LOG_DIR! : path.join(root, "logs");
   const now = options.now ?? (() => new Date());
   const startedAt = now();
   const runId = randomBytes(4).toString("hex");
   const dateDir = startedAt.toISOString().slice(0, 10); // YYYY-MM-DD
-  const dir = path.join(root, "logs", "runs", dateDir);
+  const dir = path.join(logRoot, "runs", dateDir);
   const file = path.join(dir, `${stage}-${runId}.ndjson`);
-  const relFile = path.posix.join("logs", "runs", dateDir, `${stage}-${runId}.ndjson`);
+  const indexPath = path.join(logRoot, "runs", "INDEX.ndjson");
+  const relFile = hasCustomLogRoot
+    ? file
+    : path.posix.join("logs", "runs", dateDir, `${stage}-${runId}.ndjson`);
 
   mkdirSync(dir, { recursive: true });
   const stream = createWriteStream(file, { flags: "a" });
@@ -83,7 +88,7 @@ export function startRun(stage: string, options: StartRunOptions = {}): RunLogge
     runId,
     stage,
     stream,
-    indexPath: path.join(root, "logs", "runs", "INDEX.ndjson"),
+    indexPath,
     file: relFile,
     startedAt,
     gitSha,

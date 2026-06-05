@@ -19,7 +19,7 @@ import { fetchFeed, resolveArticleBody, type RawEntry } from "./fetcher.ts";
 import { canonicalizeUrl, articleId } from "./canonicalize.ts";
 import { findDuplicate } from "./dedup.ts";
 import { scorePrefilter } from "../pipeline/prefilter.ts";
-import { getClient } from "../turso/client.ts";
+import { getClient, initializeDatabase } from "../turso/client.ts";
 import {
   insertArticle,
   recentArticlesForDedup,
@@ -199,6 +199,7 @@ export async function processSource(
 }
 
 export async function runIngest(runLog: RunLogger = NOOP_LOGGER): Promise<RunStats[]> {
+  await initializeDatabase();
   const aliases = await refreshEntityAliasCache();
   const all: RunStats[] = [];
   for (let i = 0; i < SOURCES.length; i++) {
