@@ -94,7 +94,9 @@ TURSO_DATABASE_URL=file:/home/dan/apps/cyber-news/state/cyber-news.db
 TURSO_AUTH_TOKEN=
 RUN_LOG_DIR=/home/dan/apps/cyber-news/logs
 LLM_AUTH_MODE=oauth
-ANTHROPIC_AUTH_TOKEN=...
+CLAUDE_CONFIG_DIR=/home/dan/.claude
+# Optional override; normally omitted so the SDK reads Claude Code's current access token from $CLAUDE_CONFIG_DIR/.credentials.json.
+# ANTHROPIC_AUTH_TOKEN=***
 # ANTHROPIC_API_KEY must be unset when LLM_AUTH_MODE=oauth
 DISCORD_WEBHOOK_NEWS=https://discord.com/api/webhooks/...
 MODEL_TRIAGE=claude-haiku-4-5

@@ -34,8 +34,12 @@ if [[ "$stage" == "process" ]]; then
       echo "ANTHROPIC_API_KEY must be unset for local oauth process runtime" >&2
       exit 78
     fi
-    if [[ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
-      echo "ANTHROPIC_AUTH_TOKEN is required for local oauth process runtime" >&2
+    if [[ -z "${ANTHROPIC_AUTH_TOKEN:-}" && -n "${CLAUDE_CONFIG_DIR:-}" && -x "$(command -v claude || true)" ]]; then
+      # Best-effort refresh of Claude Code's local OAuth credential before the SDK reads it.
+      claude auth status --text >/dev/null
+    fi
+    if [[ -z "${ANTHROPIC_AUTH_TOKEN:-}" && -z "${CLAUDE_CONFIG_DIR:-}" ]]; then
+      echo "ANTHROPIC_AUTH_TOKEN or CLAUDE_CONFIG_DIR is required for local oauth process runtime" >&2
       exit 78
     fi
   fi

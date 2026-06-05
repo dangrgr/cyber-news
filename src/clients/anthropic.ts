@@ -2,6 +2,8 @@
 // interface `AnthropicClient` — test seam. Pattern runner calls
 // `messages.create()`, nothing else.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 
 export interface AnthropicAuthOptions {
@@ -12,19 +14,42 @@ export interface AnthropicAuthOptions {
 export function resolveAnthropicAuthOptions(env: NodeJS.ProcessEnv = process.env): AnthropicAuthOptions {
   const authMode = env.LLM_AUTH_MODE?.toLowerCase();
   const apiKey = env.ANTHROPIC_API_KEY ?? null;
-  const authToken = env.ANTHROPIC_AUTH_TOKEN ?? null;
+  const authToken = env.ANTHROPIC_AUTH_TOKEN ?? readClaudeCodeAccessToken(env);
 
   if (authMode === "oauth") {
-    if (!authToken) {
-      throw new Error("ANTHROPIC_AUTH_TOKEN is required when LLM_AUTH_MODE=oauth");
-    }
     if (apiKey) {
       throw new Error("ANTHROPIC_API_KEY must be unset when LLM_AUTH_MODE=oauth");
+    }
+    if (!authToken) {
+      throw new Error(
+        "ANTHROPIC_AUTH_TOKEN is required when LLM_AUTH_MODE=oauth, or CLAUDE_CONFIG_DIR must point to Claude Code credentials",
+      );
     }
     return { apiKey: null, authToken };
   }
 
   return { apiKey, authToken };
+}
+
+export function readClaudeCodeAccessToken(env: NodeJS.ProcessEnv = process.env, now = Date.now()): string | null {
+  const configDir = env.CLAUDE_CONFIG_DIR;
+  if (!configDir) return null;
+
+  try {
+    const raw = readFileSync(join(configDir, ".credentials.json"), "utf8");
+    const parsed = JSON.parse(raw) as { claudeAiOauth?: { accessToken?: unknown; expiresAt?: unknown } };
+    const oauth = parsed.claudeAiOauth;
+    if (typeof oauth?.accessToken !== "string" || oauth.accessToken.length === 0) return null;
+
+    if (typeof oauth.expiresAt === "number" && oauth.expiresAt <= now + 5 * 60 * 1000) {
+      throw new Error("Claude Code OAuth access token is expired or within the 5 minute refresh buffer");
+    }
+
+    return oauth.accessToken;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("refresh buffer")) throw error;
+    return null;
+  }
 }
 
 export interface MessagesCreateParams {
