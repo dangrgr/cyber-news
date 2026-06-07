@@ -5,7 +5,7 @@
 // we never write it back to the table or the YAML.
 
 import { appendFile, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import path, { dirname } from "node:path";
 import type { Client } from "@libsql/client";
 
 export interface ResolvedEntity {
@@ -17,10 +17,11 @@ export interface ResolvedEntity {
 
 export interface EntityResolverDeps {
   client: Client;
-  /** Where to append unknown-entity records. Default: logs/unknown_entities/{YYYY-MM}.jsonl */
+  /** Where to append unknown-entity records. Default: {RUN_LOG_DIR|logs}/unknown_entities/{YYYY-MM}.jsonl */
   unknownLogPath?: string;
   appendFile?: (path: string, content: string) => Promise<void>;
   now?: () => Date;
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -80,7 +81,7 @@ async function loadAliasesLower(
 async function logUnknowns(rows: ResolvedEntity[], deps: EntityResolverDeps): Promise<void> {
   const now = (deps.now ?? (() => new Date()))();
   const month = now.toISOString().slice(0, 7); // YYYY-MM
-  const path = deps.unknownLogPath ?? `logs/unknown_entities/${month}.jsonl`;
+  const logPath = deps.unknownLogPath ?? defaultUnknownLogPath(month, deps.env ?? process.env);
   const writer = deps.appendFile ?? defaultAppend;
   const lines = rows
     .map((r) =>
@@ -91,7 +92,13 @@ async function logUnknowns(rows: ResolvedEntity[], deps: EntityResolverDeps): Pr
       }),
     )
     .join("\n") + "\n";
-  await writer(path, lines);
+  await writer(logPath, lines);
+}
+
+function defaultUnknownLogPath(month: string, env: NodeJS.ProcessEnv): string {
+  const hasCustomLogRoot = env.RUN_LOG_DIR !== undefined && env.RUN_LOG_DIR.length > 0;
+  const logRoot = hasCustomLogRoot ? env.RUN_LOG_DIR! : "logs";
+  return path.join(logRoot, "unknown_entities", `${month}.jsonl`);
 }
 
 async function defaultAppend(path: string, content: string): Promise<void> {

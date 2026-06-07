@@ -14,6 +14,8 @@ bun.lockb
 # logs/runs/ is intentionally NOT ignored — per-run NDJSON + INDEX.ndjson are
 # committed (see docs/observability-plan.md). The `*.log` rule above only
 # matches `.log` files, so `.ndjson` files under logs/runs/ are tracked.
+# Unknown-entity JSONL is runtime output and should stay out of commits.
+logs/unknown_entities/
 
 # Local libsql files used by `migrate` / `ingest` against `file:` URLs
 *.db
