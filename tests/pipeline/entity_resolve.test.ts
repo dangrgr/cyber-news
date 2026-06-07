@@ -84,6 +84,21 @@ describe("resolveEntities: unknown logging", () => {
     assert.ok(lines.every((l) => typeof l.logged_at === "string"));
   });
 
+  it("roots the default unknown log path at RUN_LOG_DIR when set", async () => {
+    const appended: Array<[string, string]> = [];
+    await resolveEntities(
+      [{ raw: "Nobody McNoOne", entityType: "actor" }],
+      {
+        client,
+        appendFile: async (p, c) => { appended.push([p, c]); },
+        now: () => new Date("2026-04-22T10:00:00.000Z"),
+        env: { RUN_LOG_DIR: "/var/app-home/logs" },
+      },
+    );
+    assert.equal(appended.length, 1);
+    assert.equal(appended[0]![0], "/var/app-home/logs/unknown_entities/2026-04.jsonl");
+  });
+
   it("does nothing when all entities are known", async () => {
     const appended: Array<[string, string]> = [];
     await resolveEntities(
