@@ -115,7 +115,12 @@ describe("processSource: article_ingested event", () => {
       wordCount: 15,
       fallbackReason: null,
     });
-    const feedEntries = async () => [entry(source, "https://example.com/old-article", "Old Article Still In Feed")];
+    // Published 45 days ago — older than DEDUP_LOOKBACK_DAYS (30), so on the second
+    // run recentArticlesForDedup won't load it and findDuplicate returns no_match,
+    // letting the entry reach insertArticle where ON CONFLICT(id) fires.
+    const oldPublishedAt = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+    const oldEntry = { ...entry(source, "https://example.com/old-article", "Old Article Still In Feed"), publishedAt: oldPublishedAt };
+    const feedEntries = async () => [oldEntry];
 
     // First run: article is genuinely new → inserted and logged.
     await processSource(0, [], firstLog, { client: db, fetchFeed: feedEntries, resolveBody });
