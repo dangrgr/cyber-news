@@ -100,4 +100,36 @@ describe("processSource: article_ingested event", () => {
     assert.equal(events.filter((e) => e.event === "article_ingested").length, 1);
     assert.equal(events.filter((e) => e.event === "dedup_decision").length, 2);
   });
+
+  it("does not emit article_ingested when article already exists in DB (ON CONFLICT no-op)", async () => {
+    // Simulates articles older than DEDUP_LOOKBACK_DAYS that reappear in RSS feeds:
+    // recentArticlesForDedup won't include them, so findDuplicate passes them through,
+    // but insertArticle hits ON CONFLICT(id) DO NOTHING and returns false.
+    const source = SOURCES[0]!;
+    const { runLog: firstLog } = captureRunLog();
+    const { runLog: secondLog, events: secondEvents } = captureRunLog();
+
+    const resolveBody = async (): Promise<import("../../src/ingest/fetcher.ts").ResolvedBody> => ({
+      text: "body text that is long enough to pass prefilter easily with many words here",
+      method: "readability" as const,
+      wordCount: 15,
+      fallbackReason: null,
+    });
+    // Published 45 days ago — older than DEDUP_LOOKBACK_DAYS (30), so on the second
+    // run recentArticlesForDedup won't load it and findDuplicate returns no_match,
+    // letting the entry reach insertArticle where ON CONFLICT(id) fires.
+    const oldPublishedAt = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+    const oldEntry = { ...entry(source, "https://example.com/old-article", "Old Article Still In Feed"), publishedAt: oldPublishedAt };
+    const feedEntries = async () => [oldEntry];
+
+    // First run: article is genuinely new → inserted and logged.
+    await processSource(0, [], firstLog, { client: db, fetchFeed: feedEntries, resolveBody });
+
+    // Second run: same URL, same ID → ON CONFLICT fires, wasInserted=false.
+    const stats = await processSource(0, [], secondLog, { client: db, fetchFeed: feedEntries, resolveBody });
+
+    assert.equal(secondEvents.filter((e) => e.event === "article_ingested").length, 0);
+    assert.equal(stats.duplicates, 1, "already-exists article should count as a duplicate");
+    assert.equal(stats.passed_to_triage, 0, "should not overcount passed_to_triage");
+  });
 });

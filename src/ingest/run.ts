@@ -142,7 +142,7 @@ export async function processSource(
       const stage = pre.passed ? "deduped" : "pre_filtered";
       const failureReason = pre.passed ? null : `prefilter_score=${pre.score} ${pre.reason}`;
 
-      await insertArticle(client, {
+      const wasInserted = await insertArticle(client, {
         id,
         sourceId: source.id,
         url: entry.link,
@@ -154,6 +154,17 @@ export async function processSource(
         stage,
         failureReason,
       });
+
+      // ON CONFLICT(id) DO NOTHING fires when the article already exists in the
+      // DB from a prior run — most commonly articles that are older than the
+      // DEDUP_LOOKBACK_DAYS window but still appear in the RSS feed. Count as a
+      // duplicate so the per-run totals stay consistent and the in-memory recent
+      // set is updated to prevent re-attempts within the same run.
+      if (!wasInserted) {
+        stats.duplicates++;
+        recent.push({ id, canonicalUrl: canonical, title: entry.title, publishedAt: entry.publishedAt, incidentId: null });
+        continue;
+      }
 
       // Emitted only after the row is written, so the event can't claim an
       // article was ingested that a failing insert never persisted. Records the
