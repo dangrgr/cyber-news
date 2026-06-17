@@ -1,7 +1,7 @@
 // RSS + article-body fetch. PRD §8.1: rss-parser → @mozilla/readability on jsdom.
 
 import Parser from "rss-parser";
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 import { Readability } from "@mozilla/readability";
 import type { SourceFeed } from "./sources.ts";
 
@@ -30,6 +30,28 @@ const rssParser = new Parser({
   timeout: FETCH_TIMEOUT_MS,
   headers: { "User-Agent": USER_AGENT },
 });
+
+type JsdomError = Error & { type?: string; detail?: unknown };
+
+function isBenignStylesheetParseError(error: JsdomError): boolean {
+  return error.type === "css parsing" && error.message === "Could not parse CSS stylesheet";
+}
+
+function createArticleVirtualConsole(): VirtualConsole {
+  const virtualConsole = new VirtualConsole();
+
+  // Preserve normal in-page console forwarding and non-CSS jsdom diagnostics,
+  // but drop stylesheet parser dumps. Modern vendor CSS often exceeds jsdom's
+  // CSSOM support; dumping the full stylesheet creates multi-MiB ingest logs.
+  virtualConsole.sendTo(console, { omitJSDOMErrors: true });
+  virtualConsole.on("jsdomError", (error) => {
+    if (!isBenignStylesheetParseError(error as JsdomError)) {
+      console.error(error);
+    }
+  });
+
+  return virtualConsole;
+}
 
 async function fetchWithTimeout(url: string): Promise<Response> {
   const ctl = new AbortController();
@@ -70,7 +92,7 @@ export async function extractArticleBodyDetailed(url: string): Promise<Extractio
     const res = await fetchWithTimeout(url);
     if (!res.ok) return { text: null, fallbackReason: "http_error" };
     const html = (await res.text()).slice(0, MAX_HTML_BYTES);
-    const dom = new JSDOM(html, { url });
+    const dom = new JSDOM(html, { url, virtualConsole: createArticleVirtualConsole() });
     const article = new Readability(dom.window.document).parse();
     const text = article?.textContent?.replace(/\s+\n/g, "\n").trim() ?? "";
     // Empty/whitespace-only extraction is a fallback, not a valid body — this
