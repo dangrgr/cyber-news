@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   bodyWordCount,
+  extractArticleBodyDetailed,
   resolveArticleBody,
   type ExtractionResult,
 } from "../../src/ingest/fetcher.ts";
@@ -34,6 +35,48 @@ describe("bodyWordCount", () => {
   it("treats &nbsp;-family entities as word boundaries, not glue", () => {
     assert.equal(bodyWordCount("a&nbsp;b"), 2);
     assert.equal(bodyWordCount("a&#160;b&#xA0;c"), 3);
+  });
+});
+
+describe("extractArticleBodyDetailed", () => {
+  it("suppresses benign jsdom CSS parser noise while extracting article text", async () => {
+    const previousFetch = globalThis.fetch;
+    const previousConsoleError = console.error;
+    const errors: unknown[][] = [];
+
+    globalThis.fetch = async () =>
+      new Response(
+        `<!doctype html>
+        <html>
+          <head><style>@scope (.article) { p { color: red } }</style></head>
+          <body>
+            <article>
+              <h1>Important breach confirmed</h1>
+              <p>Attackers exploited a real vulnerability and defenders need clear details.</p>
+            </article>
+          </body>
+        </html>`,
+        { status: 200, headers: { "Content-Type": "text/html" } },
+      );
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
+
+    try {
+      const result = await extractArticleBodyDetailed("https://example.com/article");
+
+      assert.equal(result.fallbackReason, null);
+      assert.match(result.text ?? "", /Important breach confirmed/);
+      assert.equal(
+        errors.some((args) =>
+          args.some((arg) => String(arg).includes("Could not parse CSS stylesheet")),
+        ),
+        false,
+      );
+    } finally {
+      globalThis.fetch = previousFetch;
+      console.error = previousConsoleError;
+    }
   });
 });
 
