@@ -199,6 +199,46 @@ export async function queryByFilter(
   return res.rows.map(rowToIncident);
 }
 
+/**
+ * Registers each CVE in a new CVE-mode incident against the secondary index.
+ * `INSERT OR IGNORE` so a re-run against an already-inserted incident is safe.
+ */
+export async function indexIncidentCves(
+  client: Client,
+  incidentId: string,
+  cves: string[],
+  bucket: number,
+): Promise<void> {
+  for (const cve of cves) {
+    await client.execute({
+      sql: `INSERT OR IGNORE INTO incident_cve_index (cve_id, bucket, incident_id) VALUES (?, ?, ?)`,
+      args: [cve, bucket, incidentId],
+    });
+  }
+}
+
+/**
+ * Looks up an existing incident that shares any of the given CVEs in the same
+ * date bucket. Returns the incident ID of the first match, or null.
+ * Used by resolveIncidentId() to handle partial-CVE-set corroboration.
+ */
+export async function findIncidentByCves(
+  client: Client,
+  cves: string[],
+  bucket: number,
+): Promise<string | null> {
+  if (cves.length === 0) return null;
+  const placeholders = cves.map(() => "?").join(", ");
+  const res = await client.execute({
+    sql: `SELECT incident_id FROM incident_cve_index
+          WHERE bucket = ? AND cve_id IN (${placeholders})
+          LIMIT 1`,
+    args: [bucket, ...cves],
+  });
+  const row = res.rows[0];
+  return row ? String(row.incident_id) : null;
+}
+
 export async function setCorroborationCounts(
   client: Client,
   incidentId: string,
