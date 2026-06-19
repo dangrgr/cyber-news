@@ -56,7 +56,13 @@ import {
   loadAliasesIntoTable,
   type ArticleRow,
 } from "../turso/articles.ts";
-import { insertIncident, getIncident, addSourceToIncident } from "../turso/incidents.ts";
+import {
+  insertIncident,
+  getIncident,
+  addSourceToIncident,
+  indexIncidentCves,
+  findIncidentByCves,
+} from "../turso/incidents.ts";
 
 import { getSourceByCanonicalUrl, SOURCES } from "../ingest/sources.ts";
 import type { RunLogger } from "../util/run_log.ts";
@@ -474,8 +480,17 @@ async function resolveIncidentId(
   deps: ProcessDeps,
 ): Promise<string> {
   const key = incidentKey(article, extraction);
+
+  // CVE mode: look up via the secondary index so partial CVE-set overlap still
+  // corroborates. Source A extracting [CVE-X] and source B extracting [CVE-X,
+  // CVE-Y] both resolve to the same incident because CVE-X is indexed.
+  // Incident mode: direct hash lookup (victim+actor+date, no index needed).
+  const existingId = key.mode === "cve" && key.bucket !== null
+    ? await findIncidentByCves(deps.db, key.cves, key.bucket)
+    : null;
   const newId = incidentIdFromKey(key);
-  const existing = await getIncident(deps.db, newId);
+  const resolvedId = existingId ?? newId;
+  const existing = existingId ? await getIncident(deps.db, existingId) : await getIncident(deps.db, newId);
 
   if (existing) {
     // Corroboration: another source is reporting an incident we already have.
@@ -483,7 +498,7 @@ async function resolveIncidentId(
     // the original publish.
     const alreadyPresent = existing.source_urls.includes(article.url);
     if (!alreadyPresent) {
-      await addSourceToIncident(deps.db, newId, article.url);
+      await addSourceToIncident(deps.db, resolvedId, article.url);
     }
     if (deps.runLog) {
       const sourceTier = SOURCES.find((s) => s.id === article.source_id)?.tier ?? "unknown";
@@ -499,7 +514,7 @@ async function resolveIncidentId(
       const corroboratorVictim = extraction.victim_orgs_confirmed[0]?.toLowerCase().trim() ?? null;
       deps.runLog.logEvent({
         event: "incident_corroborated",
-        incident_id: newId,
+        incident_id: resolvedId,
         corroborator_article_id: article.id,
         corroborator_source_id: article.source_id,
         corroborator_source_tier: sourceTier,
@@ -516,7 +531,7 @@ async function resolveIncidentId(
         corroboration_count_after: corroborationCountAfter,
       });
     }
-    return newId;
+    return resolvedId;
   }
 
   await insertIncident(deps.db, {
@@ -537,6 +552,13 @@ async function resolveIncidentId(
     primarySource: extraction.primary_source,
     sourceUrls: [article.url],
   });
+
+  // Register each CVE so future articles with overlapping (but not identical)
+  // CVE sets can still find and corroborate this incident.
+  if (key.mode === "cve" && key.bucket !== null && key.cves.length > 0) {
+    await indexIncidentCves(deps.db, newId, key.cves, key.bucket);
+  }
+
   // Symmetric with incident_corroborated. key_* are the exact hash inputs, so
   // an audit can see why obviously-same cross-source incidents got distinct ids.
   deps.runLog?.logEvent({

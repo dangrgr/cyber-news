@@ -17,11 +17,19 @@ describe("runMigrations", () => {
     assert.ok(applied.some((r) => r.file === "0001_initial.sql"));
     assert.ok(applied.some((r) => r.file === "0002_phase2.sql"));
 
-    // Tracker recorded both.
+    // Tracker recorded all migrations.
     const tracker = await client.execute(`SELECT id FROM _migrations ORDER BY id`);
-    assert.deepEqual(
-      tracker.rows.map((r) => String(r.id)),
-      ["0001_initial.sql", "0002_phase2.sql"],
+    assert.ok(
+      tracker.rows.map((r) => String(r.id)).includes("0001_initial.sql"),
+      "tracker missing 0001",
+    );
+    assert.ok(
+      tracker.rows.map((r) => String(r.id)).includes("0002_phase2.sql"),
+      "tracker missing 0002",
+    );
+    assert.ok(
+      tracker.rows.map((r) => String(r.id)).includes("0003_cve_incident_index.sql"),
+      "tracker missing 0003",
     );
   });
 
@@ -78,6 +86,16 @@ describe("schema shape after migrations", () => {
       "corroboration_tier1",
       "corroboration_tier2",
     ]) {
+      assert.ok(cols.has(c), `missing column: ${c}`);
+    }
+  });
+
+  it("incident_cve_index exists with expected columns", async () => {
+    const client = await freshClient();
+    await runMigrations(client, "migrations");
+    const pragma = await client.execute(`PRAGMA table_info(incident_cve_index)`);
+    const cols = new Set(pragma.rows.map((r) => String(r.name)));
+    for (const c of ["cve_id", "bucket", "incident_id"]) {
       assert.ok(cols.has(c), `missing column: ${c}`);
     }
   });

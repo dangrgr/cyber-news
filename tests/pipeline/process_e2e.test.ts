@@ -1506,6 +1506,103 @@ describe("processPendingArticles: CVE-mode corroboration", () => {
     assert.equal(corroborated[0]!.incident_id, incidentId);
   });
 
+  it("CVE superset/subset: source extracting [CVE-A, CVE-B] corroborates source that only extracted [CVE-A]", async () => {
+    // Regression for the cross-source corroboration starvation reported in #35.
+    // Real incident: securityweek extracted [CVE-2026-20223] and bleepingcomputer
+    // extracted [CVE-2026-20182, CVE-2026-20223] for the same Cisco Secure Workload
+    // disclosure. The old full-set hash produced distinct incident IDs → zero
+    // corroboration. The incident_cve_index secondary lookup fixes this.
+    const nullImpact = {
+      affected_count: null,
+      affected_count_unit: null,
+      data_exfil_size: null,
+      sector: null,
+      geographic_scope: null,
+      service_disruption: null,
+    };
+
+    for (const [firstCves, secondCves] of [
+      [["CVE-2026-20223"], ["CVE-2026-20182", "CVE-2026-20223"]],          // subset first
+      [["CVE-2026-20182", "CVE-2026-20223"], ["CVE-2026-20223"]],          // superset first
+    ] as [string[], string[]][]) {
+      db = createClient({ url: ":memory:" });
+      await runMigrations(db, "migrations");
+      resetPatternCaches();
+
+      // Both articles mention both CVEs so the deterministic grounding check
+      // passes regardless of which subset the extract mock returns for each.
+      const bothCveText = "Cisco patches CVE-2026-20182 and CVE-2026-20223 in Secure Workload.";
+      await seedArticle(db, {
+        id: "art-sw-s",
+        sourceId: "securityweek",
+        url: "https://www.securityweek.com/cisco-cvss10",
+        canonicalUrl: "https://www.securityweek.com/cisco-cvss10",
+        publishedAt: "2026-05-22T10:00:00Z",
+        rawText: bothCveText,
+      });
+      await seedArticle(db, {
+        id: "art-bleep-s",
+        sourceId: "bleepingcomputer",
+        url: "https://www.bleepingcomputer.com/cisco-multi-cve",
+        canonicalUrl: "https://www.bleepingcomputer.com/cisco-multi-cve",
+        publishedAt: "2026-05-22T14:00:00Z",
+        rawText: bothCveText,
+      });
+
+      let idx = 0;
+      const anthropic = routedAnthropic({
+        triage: () =>
+          JSON.stringify({ decision: "process", novel: true, significant: true, duplicate_of: null, reason: "CVE.", reason_code: null }),
+        extract: () => {
+          const cves = ++idx === 1 ? firstCves : secondCves;
+          return JSON.stringify({
+            title: null,
+            summary: "Cisco Secure Workload RCE disclosure.",
+            victim_orgs_confirmed: [],
+            orgs_mentioned: ["Cisco"],
+            threat_actors_attributed: [],
+            actors_mentioned: [],
+            cves,
+            initial_access_vector: null,
+            ttps: [],
+            impact: nullImpact,
+            incident_date: "2026-05-22",
+            confidence: "reported",
+            claim_markers_observed: [],
+            primary_source: "cited_vendor_advisory",
+          });
+        },
+        factcheck: () => JSON.stringify({ overall: "pass", issues: [] }),
+      });
+
+      const events: Array<Record<string, unknown>> = [];
+      const discord = recordingDiscord();
+      const summary = await processPendingArticles({
+        db,
+        anthropic: anthropic.client,
+        discord,
+        brave: emptyBrave,
+        cveCache: { client: db, nvd: alwaysExistsNvd },
+        env: { MODEL_TRIAGE: "claude-haiku-4-5", MODEL_EXTRACTION: "claude-haiku-4-5", MODEL_FACTCHECK: "claude-haiku-4-5" },
+        runLog: { runId: "test-run", stage: "process", logCall: () => {}, logEvent: (e) => events.push(e), finishRun: async () => {} },
+      });
+
+      assert.equal(summary.published, 2, `both articles published (first CVEs: ${firstCves})`);
+      assert.equal(discord.posts.length, 1, `one post (first CVEs: ${firstCves})`);
+      assert.equal(discord.patches.length, 1, `one corroboration PATCH (first CVEs: ${firstCves})`);
+
+      const articles = await db.execute({
+        sql: `SELECT incident_id FROM articles WHERE id IN (?, ?)`,
+        args: ["art-sw-s", "art-bleep-s"],
+      });
+      const ids = new Set(articles.rows.map((r) => String(r.incident_id)));
+      assert.equal(ids.size, 1, `same incident id regardless of CVE-set order (first: ${firstCves})`);
+
+      const corroborated = events.filter((e) => e.event === "incident_corroborated");
+      assert.equal(corroborated.length, 1, `exactly one corroboration (first CVEs: ${firstCves})`);
+    }
+  });
+
   it("two distinct breaches sharing a CVE in different date buckets stay separate", async () => {
     // Over-merge guard: a reused, long-lived CVE cited by two genuinely distinct
     // breaches weeks apart must NOT collapse. The CVE-mode key is bounded by a
