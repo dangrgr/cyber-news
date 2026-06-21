@@ -97,7 +97,8 @@ if [[ "$stage" == "process" && "${LLM_AUTH_MODE:-}" == "oauth" ]]; then
 fi
 
 (
-  flock -n 9 || { echo "another cyber-news local pipeline is already running" >&2; exit 75; }
+  # Overlap is a healthy no-op for Hermes no-agent crons; the next tick retries.
+  flock -n 9 || exit 0
   cd "$REPO"
   case "$stage" in
     ingest)

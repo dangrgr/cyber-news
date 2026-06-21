@@ -57,6 +57,28 @@ node -e 'const fs=require("fs"); fs.appendFileSync(process.env.OBSERVED_ENV_OUT,
   }
 });
 
+test('local_run.sh treats an active pipeline lock as a silent no-op', () => {
+  const tmp = mkdtempSync(path.join(tmpdir(), 'cyber-news-local-run-lock-'));
+  const appHome = path.join(tmp, 'app');
+  const lockDir = path.join(appHome, 'locks');
+  const lockFile = path.join(lockDir, 'pipeline.lock');
+
+  mkdirSync(lockDir, { recursive: true });
+
+  const result = spawnSync(
+    'flock',
+    [lockFile, 'bash', '-c', 'CYBER_NEWS_APP_HOME="$1" CYBER_NEWS_REPO="$2" bash scripts/local_run.sh ingest', '_', appHome, repoRoot],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
+});
+
 test('local_run.sh refreshes expired Claude Code OAuth before process runtime', () => {
   const tmp = mkdtempSync(path.join(tmpdir(), 'cyber-news-local-run-oauth-'));
   const appHome = path.join(tmp, 'app');
