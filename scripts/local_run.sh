@@ -87,7 +87,7 @@ refresh_claude_oauth_if_needed() {
     printf '%s refreshing Claude Code OAuth token before local process runtime\n' "$(date -Is)"
     printf 'Return OK only.\n' | timeout "${CLAUDE_OAUTH_REFRESH_TIMEOUT_SECONDS:-120}" \
       claude -p --max-turns 1 \
-      --disallowedTools Read,Grep,Glob,LS,Bash,Edit,Write,MultiEdit,Task,WebFetch,WebSearch \
+      --disallowedTools Read,Grep,Glob,Bash,Edit,Write,Task,WebFetch,WebSearch \
       >/dev/null
   fi
 }
