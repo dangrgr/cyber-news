@@ -28,7 +28,11 @@ export function createResponses(key: string, send = fetch) {
         headers: { authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify({ store: false, reasoning: { effort: "low" }, ...body }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status} (${res.headers.get("x-request-id") ?? "unknown request"})`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as {error?: {code?: string}};
+        const code = String(body.error?.code ?? "unspecified").replace(/[^a-z0-9_-]/gi, "").slice(0, 64);
+        throw new Error(`HTTP ${res.status} ${code} (${res.headers.get("x-request-id") ?? "unknown request"})`);
+      }
       result = await res.json() as ResponseBody;
     } catch (error) {
       throw new ProviderUnavailable(`OpenAI request unavailable: ${(error as Error).message}`);
