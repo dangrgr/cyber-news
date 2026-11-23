@@ -9,7 +9,11 @@ import type { IncidentRow } from "../turso/incidents.ts";
 import { setDiscordMessageId } from "../turso/incidents.ts";
 import { composeEmbed, type CorroborationInfo, type EmbedSource } from "./embed.ts";
 
+import type { DiscordPayload } from "../clients/discord.ts";
+import { ProviderUnavailable } from "../clients/openai.ts";
+
 export interface PublishInput {
+  verified?: DiscordPayload;
   incident: IncidentRow;
   sources: readonly EmbedSource[];
   corroboration: CorroborationInfo;
@@ -26,14 +30,22 @@ export interface PublishResult {
 }
 
 export async function publishIncident(input: PublishInput, deps: PublishDeps): Promise<PublishResult> {
-  const payload = composeEmbed(input.incident, input.sources, input.corroboration);
+  const payload = input.verified ?? composeEmbed(input.incident, input.sources, input.corroboration);
 
   if (input.incident.discord_message_id) {
-    await deps.discord.patchMessage(input.incident.discord_message_id, payload);
+    try { await deps.discord.patchMessage(input.incident.discord_message_id, payload); }
+    catch (err) { if (input.verified) throw new ProviderUnavailable("Discord edit deferred"); throw err; }
     return { posted: "updated", messageId: input.incident.discord_message_id };
   }
 
-  const { messageId } = await deps.discord.postMessage(payload);
+  if (input.verified) {
+    const reserved = await deps.dbClient.execute({sql: "INSERT OR IGNORE INTO pending_discord_posts VALUES (?,CURRENT_TIMESTAMP)", args: [input.incident.id]});
+    if (!reserved.rowsAffected) throw new ProviderUnavailable("Reconcile pending Discord POST before retry");
+  }
+  let messageId: string;
+  try { ({ messageId } = await deps.discord.postMessage(payload)); }
+  catch (err) { if (input.verified) throw new ProviderUnavailable("Reconcile ambiguous Discord POST"); throw err; }
+  if (!messageId) throw new ProviderUnavailable("Missing Discord acknowledgement");
   await setDiscordMessageId(deps.dbClient, input.incident.id, messageId);
   return { posted: "new", messageId };
 }

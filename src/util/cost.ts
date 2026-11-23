@@ -34,6 +34,7 @@ export function computeCost(
  * else Sonnet (the project's only two model families today).
  */
 export function ratesForModel(modelId: string): ModelRates {
+  if (modelId.startsWith("gpt-5.4-mini")) return { inputPerMillion: 0.75, outputPerMillion: 4.5 };
   return modelId.toLowerCase().includes("haiku")
     ? DEFAULT_HAIKU_RATES
     : DEFAULT_SONNET_RATES;

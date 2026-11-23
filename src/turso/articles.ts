@@ -120,15 +120,17 @@ export async function attachIncident(
  * run can't realistically process more than ~50 articles within the GH Actions
  * 15-minute budget (see PRD §13 and the MAX_PROCESS_BATCH env default).
  */
-export async function queryByStage(client: Client, stage: Stage, limit: number): Promise<ArticleRow[]> {
+export async function queryByStage(client: Client, stage: Stage, limit: number, cutoff: string | null = null, retryQueue = false): Promise<ArticleRow[]> {
   const res = await client.execute({
     sql: `SELECT id, source_id, url, canonical_url, title, author, published_at,
                  ingested_at, raw_text, stage_reached, failure_reason, incident_id
             FROM articles
            WHERE stage_reached = ?
+             AND (? IS NULL OR (julianday(published_at) >= julianday(?) AND julianday(ingested_at) >= julianday(?)))
+             ${retryQueue ? "AND NOT EXISTS (SELECT 1 FROM publication_retry r WHERE r.article_id = articles.id AND julianday(r.retry_at) > julianday('now'))" : ""}
         ORDER BY published_at ASC
            LIMIT ?`,
-    args: [stage, limit],
+    args: [stage, cutoff, cutoff, cutoff, limit],
   });
   return res.rows.map((r) => ({
     id: String(r.id),

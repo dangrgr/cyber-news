@@ -67,11 +67,17 @@ import {
 import { getSourceByCanonicalUrl, SOURCES } from "../ingest/sources.ts";
 import type { RunLogger } from "../util/run_log.ts";
 
+import { EvidenceHold, ProviderUnavailable } from "../clients/openai.ts";
+import type { DiscordPayload } from "../clients/discord.ts";
+import type { IncidentRow } from "../turso/incidents.ts";
+import { restartCutoff } from "../util/cutoff.ts";
+
 export interface ProcessDeps {
   db: Client;
   anthropic: AnthropicClient;
   discord: DiscordClient;
-  brave: BraveClient;
+  brave?: BraveClient;
+  verify?: (incident: IncidentRow, candidate: ExtractionOutput) => Promise<DiscordPayload>;
   cveCache: CveCacheDeps;
   /** Env vars. Defaults to process.env. Test seam. */
   env?: NodeJS.ProcessEnv;
@@ -145,7 +151,7 @@ export async function processPendingArticles(deps: ProcessDeps): Promise<Process
   const entities = await loadEntities(deps.entitiesPath ?? "entities.yaml");
   await loadAliasesIntoTable(deps.db, flattenAliases(entities));
 
-  const pending = await queryByStage(deps.db, "deduped", maxBatch);
+  const pending = await queryByStage(deps.db, "deduped", maxBatch, restartCutoff(env.NEWS_RESTART_UTC), Boolean(deps.verify));
   const summary: ProcessSummary = {
     processed: 0,
     triage_rejected: 0,
@@ -194,6 +200,13 @@ export async function processPendingArticles(deps: ProcessDeps): Promise<Process
           break;
       }
     } catch (err) {
+      if (err instanceof ProviderUnavailable) {
+        await deps.db.execute({ sql: `INSERT INTO publication_retry(article_id,retry_at)
+          VALUES (?,datetime('now','+5 minutes')) ON CONFLICT(article_id) DO UPDATE SET
+          retry_at=datetime('now', '+' || min(240, 5 * (1 << min(attempts,6))) || ' minutes'), attempts=attempts+1`,
+          args: [article.id] });
+        throw err;
+      }
       // Unhandled error: stamp article with a distinctive failure so we can
       // postmortem from the DB without parsing stack traces.
       const msg = err instanceof Error ? err.message : String(err);
@@ -447,14 +460,27 @@ async function processOne(
   // ---- Incident: new or existing ----
   const incidentId = await resolveIncidentId(article, finalExtraction, deps);
   await attachIncident(deps.db, article.id, incidentId);
-  await setStage(deps.db, article.id, "published");
+
 
   // ---- Publish ----
   const incident = await getIncident(deps.db, incidentId);
   if (!incident) throw new Error(`incident vanished: ${incidentId}`);
 
+  if (deps.verify) {
+    try {
+      const verified = await deps.verify(incident, finalExtraction);
+      await publishIncident({ incident, sources: [], corroboration: { tier1: 0, tier2: 0 }, verified }, { dbClient: deps.db, discord: deps.discord });
+    } catch (error) {
+      if (!(error instanceof EvidenceHold)) throw error;
+      await setStage(deps.db, article.id, "factcheck_failed", error.message);
+      return { kind: "factcheck_failed", stageCosts, failure_reason: error.message };
+    }
+    await setStage(deps.db, article.id, "published");
+    return { kind: "published", stageCosts, incident_id: incidentId };
+  }
+
   const braveQuery = buildCorroborationQuery(finalExtraction);
-  const braveResults = braveQuery ? await deps.brave.search(braveQuery) : [];
+  const braveResults = braveQuery && deps.brave ? await deps.brave.search(braveQuery) : [];
   const corroboration = countByTier(
     braveResults,
     entities.trusted_sources?.tier_1 ?? [],
@@ -471,6 +497,7 @@ async function processOne(
     { dbClient: deps.db, discord: deps.discord },
   );
 
+  await setStage(deps.db, article.id, "published");
   return { kind: "published", stageCosts, incident_id: incidentId };
 }
 

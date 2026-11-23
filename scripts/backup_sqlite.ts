@@ -1,8 +1,8 @@
-import { copyFile, mkdir, readdir, stat, unlink } from "node:fs/promises";
+import { rename, mkdir, readdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { createClient } from "@libsql/client";
 
-import { configureLocalSqlite, getClient, getDatabaseUrl, initializeDatabase } from "../src/turso/client.ts";
+import { getClient, getDatabaseUrl, initializeDatabase } from "../src/turso/client.ts";
 
 function filePathFromDatabaseUrl(url: string): string {
   if (!url.startsWith("file:")) {
@@ -32,7 +32,7 @@ async function pruneBackups(dir: string, retentionDays: number, now = Date.now()
 
 export async function backupLocalSqlite(): Promise<{ backup: string; pruned: number }> {
   const url = getDatabaseUrl();
-  const dbPath = filePathFromDatabaseUrl(url);
+  filePathFromDatabaseUrl(url);
   const backupDir = process.env.BACKUP_DIR ?? path.join(appHome(), "backups");
   const retentionDays = Number(process.env.BACKUP_RETENTION_DAYS ?? "14") || 14;
 
@@ -40,20 +40,23 @@ export async function backupLocalSqlite(): Promise<{ backup: string; pruned: num
 
   const client = getClient();
   await initializeDatabase(client, url);
-  await client.execute(`PRAGMA wal_checkpoint(FULL)`);
 
-  const stamp = new Date().toISOString().replace(/[:.]/g, "").replace("T", "-").slice(0, 16);
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, "").replace("T", "-");
   const backup = path.join(backupDir, `cyber-news-${stamp}.db`);
-  await copyFile(dbPath, backup);
+  const temporary = backup + ".partial";
+  await client.execute({ sql: "VACUUM INTO ?", args: [temporary] });
 
-  const backupClient = createClient({ url: `file:${backup}` });
-  await configureLocalSqlite(backupClient, `file:${backup}`);
+  const backupClient = createClient({ url: `file:${temporary}` });
+
   const integrity = await backupClient.execute(`PRAGMA integrity_check`);
   const result = String(Object.values(integrity.rows[0] ?? { integrity_check: "missing" })[0]);
+  backupClient.close();
   if (result !== "ok") {
     throw new Error(`backup integrity_check failed: ${result}`);
   }
 
+  await rename(temporary, backup);
   const pruned = await pruneBackups(backupDir, retentionDays);
   return { backup, pruned };
 }

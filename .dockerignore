@@ -1,0 +1,8 @@
+*
+!package*.json
+!scripts/
+!src/
+!patterns/
+!migrations/
+!entities.yaml
+!tsconfig.json

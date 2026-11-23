@@ -6,6 +6,7 @@
 import { closeClient, getClient, initializeDatabase } from "../turso/client.ts";
 import { createAnthropicClient } from "../clients/anthropic.ts";
 import { createDiscordClient } from "../clients/discord.ts";
+import { createResponses, openaiPatterns, verifyForDiscord } from "../clients/openai.ts";
 import { createBraveClient } from "../clients/brave.ts";
 import { createNvdClient } from "../clients/nvd.ts";
 import { processPendingArticles } from "./process.ts";
@@ -21,9 +22,10 @@ async function main(): Promise<void> {
 
   const db = getClient();
   await initializeDatabase(db);
-  const anthropic = createAnthropicClient();
-  const discord = createDiscordClient({ webhookUrl: webhook, runLog: log });
-  const brave = createBraveClient();
+  const call = process.env.LLM_PROVIDER === "openai" ? createResponses(process.env.OPENAI_API_KEY ?? "") : undefined;
+  const anthropic = call ? openaiPatterns(call) : createAnthropicClient();
+  const discord = createDiscordClient({ webhookUrl: webhook, runLog: log, maxRetries: call ? 0 : 1 });
+  const brave = call ? undefined : createBraveClient();
   const nvd = createNvdClient();
 
   // try/finally: a crash mid-pipeline must still flush partial NDJSON +
@@ -34,6 +36,7 @@ async function main(): Promise<void> {
       anthropic,
       discord,
       brave,
+      verify: call ? (incident, candidate) => verifyForDiscord(call, process.env.MODEL_VERIFY ?? "gpt-5.4-mini", incident, candidate) : undefined,
       cveCache: { client: db, nvd },
       runLog: log,
     });

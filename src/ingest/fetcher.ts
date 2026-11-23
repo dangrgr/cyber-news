@@ -172,12 +172,21 @@ export async function resolveArticleBody(
   };
 }
 
+import { restartCutoff } from "../util/cutoff.ts";
+
 export async function fetchFeed(source: SourceFeed): Promise<RawEntry[]> {
   const feed = await rssParser.parseURL(source.url);
   const out: RawEntry[] = [];
+  const cutoff = restartCutoff();
+  let skipped = 0;
   for (const item of feed.items ?? []) {
     if (!item.link || !item.title) continue;
-    const publishedAt = pickDate(item);
+    const timestamp = Date.parse(item.isoDate || item.pubDate || "");
+    if (cutoff && (!Number.isFinite(timestamp) || timestamp < Date.parse(cutoff))) {
+      skipped++;
+      continue;
+    }
+    const publishedAt = Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : pickDate(item);
     out.push({
       source,
       title: item.title.trim(),
@@ -188,6 +197,7 @@ export async function fetchFeed(source: SourceFeed): Promise<RawEntry[]> {
       rawText: (item["content:encoded"] ?? item.content ?? item.contentSnippet ?? "") as string,
     });
   }
+  if (skipped) console.log(JSON.stringify({ source: source.id, skipped_by_cutoff: skipped }));
   return out;
 }
 
